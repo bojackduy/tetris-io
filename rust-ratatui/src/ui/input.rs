@@ -17,6 +17,7 @@ struct HeldKey {
     pressed_at: Option<Instant>,
     last_repeat: Option<Instant>,
     last_event: Option<Instant>,
+    repeat_armed: bool,
 }
 
 impl HeldKey {
@@ -24,6 +25,9 @@ impl HeldKey {
         if !self.is_down {
             self.pressed_at = Some(now);
             self.last_repeat = Some(now);
+            self.repeat_armed = false;
+        } else {
+            self.repeat_armed = true;
         }
         self.is_down = true;
         self.last_event = Some(now);
@@ -38,6 +42,9 @@ impl HeldKey {
         if !self.is_down {
             self.pressed_at = Some(now - Duration::from_millis(offset));
             self.last_repeat = Some(now);
+            self.repeat_armed = false;
+        } else {
+            self.repeat_armed = true;
         }
         self.is_down = true;
         self.last_event = Some(now);
@@ -48,6 +55,7 @@ impl HeldKey {
         self.pressed_at = None;
         self.last_repeat = None;
         self.last_event = None;
+        self.repeat_armed = false;
     }
 }
 
@@ -77,18 +85,50 @@ impl InputState {
     }
 
     pub fn repeat_commands(&mut self, now: Instant, out: &mut Vec<Command>) {
-        let timeout_ms = (self.cfg.das_ms + self.cfg.arr_ms * 2).max(200);
-        auto_release_if_idle(&mut self.left, now, timeout_ms);
-        auto_release_if_idle(&mut self.right, now, timeout_ms);
-        auto_release_if_idle(&mut self.down, now, timeout_ms);
+        let short_timeout_ms = 180;
+        let long_timeout_ms = (self.cfg.das_ms + self.cfg.arr_ms * 2).max(1000);
+        let left_armed = self.left.repeat_armed;
+        let right_armed = self.right.repeat_armed;
+        let down_armed = self.down.repeat_armed;
+        auto_release_if_idle(
+            &mut self.left,
+            now,
+            if left_armed { long_timeout_ms } else { short_timeout_ms },
+        );
+        auto_release_if_idle(
+            &mut self.right,
+            now,
+            if right_armed { long_timeout_ms } else { short_timeout_ms },
+        );
+        auto_release_if_idle(
+            &mut self.down,
+            now,
+            if down_armed { long_timeout_ms } else { short_timeout_ms },
+        );
 
-        if should_repeat(self.left, now, self.cfg.das_ms, self.cfg.arr_ms) {
-            out.push(Command::MoveLeft);
-            self.left.last_repeat = Some(now);
-        }
-        if should_repeat(self.right, now, self.cfg.das_ms, self.cfg.arr_ms) {
-            out.push(Command::MoveRight);
-            self.right.last_repeat = Some(now);
+        match self.last_dir {
+            Some(Dir::Left) => {
+                if self.left.repeat_armed && should_repeat(self.left, now, self.cfg.das_ms, self.cfg.arr_ms) {
+                    out.push(Command::MoveLeft);
+                    self.left.last_repeat = Some(now);
+                }
+            }
+            Some(Dir::Right) => {
+                if self.right.repeat_armed && should_repeat(self.right, now, self.cfg.das_ms, self.cfg.arr_ms) {
+                    out.push(Command::MoveRight);
+                    self.right.last_repeat = Some(now);
+                }
+            }
+            None => {
+                if self.left.repeat_armed && should_repeat(self.left, now, self.cfg.das_ms, self.cfg.arr_ms) {
+                    out.push(Command::MoveLeft);
+                    self.left.last_repeat = Some(now);
+                }
+                if self.right.repeat_armed && should_repeat(self.right, now, self.cfg.das_ms, self.cfg.arr_ms) {
+                    out.push(Command::MoveRight);
+                    self.right.last_repeat = Some(now);
+                }
+            }
         }
     }
 
@@ -97,20 +137,31 @@ impl InputState {
             (KeyCode::Left, KeyEventKind::Press) => {
                 self.right.release();
                 let use_dcd = matches!(self.last_dir, Some(Dir::Right));
-                self.left.press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
-                out.push(Command::MoveLeft);
+                let was_down = self.left.is_down;
+                self.left
+                    .press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
+                if !was_down {
+                    out.push(Command::MoveLeft);
+                }
                 self.last_dir = Some(Dir::Left);
             }
             (KeyCode::Right, KeyEventKind::Press) => {
                 self.left.release();
                 let use_dcd = matches!(self.last_dir, Some(Dir::Left));
-                self.right.press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
-                out.push(Command::MoveRight);
+                let was_down = self.right.is_down;
+                self.right
+                    .press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
+                if !was_down {
+                    out.push(Command::MoveRight);
+                }
                 self.last_dir = Some(Dir::Right);
             }
             (KeyCode::Down, KeyEventKind::Press) => {
+                let was_down = self.down.is_down;
                 self.down.press(now);
-                out.push(Command::SoftDrop);
+                if !was_down {
+                    out.push(Command::SoftDrop);
+                }
             }
             (KeyCode::Left, KeyEventKind::Release) => {
                 self.left.release();
