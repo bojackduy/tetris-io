@@ -1,0 +1,248 @@
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+    Frame,
+};
+
+use crate::core::{
+    board::{BOARD_WIDTH, VISIBLE_HEIGHT, VISIBLE_START_Y},
+    piece::{Piece, PieceType},
+    rules::ghost_piece,
+    state::GameState,
+};
+
+pub struct RenderContext {
+    pub elapsed_secs: u64,
+}
+
+pub fn render(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
+    let area = frame.size();
+    let board_height = VISIBLE_HEIGHT as u16 + 2;
+    let board_width = BOARD_WIDTH as u16 * 2 + 2;
+    let left_width: u16 = 14;
+    let right_width: u16 = 12;
+    let total_width = left_width + board_width + right_width;
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(board_height),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(total_width),
+            Constraint::Min(0),
+        ])
+        .split(rows[1]);
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(left_width),
+            Constraint::Length(board_width),
+            Constraint::Length(right_width),
+        ])
+        .split(cols[1]);
+
+    let left = columns[0];
+    let board_area = columns[1];
+    let right = columns[2];
+
+    render_left(frame, left, state, ctx);
+    render_board(frame, board_area, state);
+    render_next(frame, right, state);
+}
+
+fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6),
+            Constraint::Min(0),
+            Constraint::Length(6),
+        ])
+        .split(area);
+
+    let hold_lines = piece_preview_lines(state.hold);
+    let hold = Paragraph::new(hold_lines).block(Block::default().title("HOLD").borders(Borders::ALL));
+    frame.render_widget(hold, chunks[0]);
+
+    let combo = Paragraph::new(vec![Line::from("(empty)")])
+        .block(Block::default().title("COMBO").borders(Borders::ALL));
+    frame.render_widget(combo, chunks[1]);
+
+    let score_lines = vec![
+        Line::from(format!("Score {:06}", state.score)),
+        Line::from(format!("Level {:02}", state.level)),
+        Line::from(format!("Lines {:02}", state.lines)),
+        Line::from(format!("Time {:02}:{:02}", ctx.elapsed_secs / 60, ctx.elapsed_secs % 60)),
+    ];
+    let score = Paragraph::new(score_lines).block(Block::default().title("Score").borders(Borders::ALL));
+    frame.render_widget(score, chunks[2]);
+}
+
+fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
+    let block = Block::default().title("BOARD").borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(VISIBLE_HEIGHT);
+    let ghost = ghost_piece(state);
+    let ghost_blocks = ghost.blocks();
+    let active_blocks = state.active.blocks();
+
+    for y in VISIBLE_START_Y as i32..(VISIBLE_START_Y + VISIBLE_HEIGHT) as i32 {
+        let mut spans: Vec<Span> = Vec::with_capacity(BOARD_WIDTH * 2);
+        for x in 0..BOARD_WIDTH as i32 {
+            let active_kind = block_at(active_blocks, x, y).map(|_| state.active.kind);
+            let ghost_kind = block_at(ghost_blocks, x, y).map(|_| state.active.kind);
+            let filled_kind = state.board.get(x, y);
+
+            let span = if let Some(kind) = active_kind {
+                Span::styled("██", Style::default().fg(piece_color(kind)))
+            } else if let Some(kind) = filled_kind {
+                Span::styled("██", Style::default().fg(piece_color(kind)))
+            } else if let Some(kind) = ghost_kind {
+                Span::styled(
+                    "░░",
+                    Style::default()
+                        .fg(piece_color(kind))
+                        .add_modifier(Modifier::DIM),
+                )
+            } else {
+                Span::styled(". ", Style::default().fg(Color::DarkGray))
+            };
+            spans.push(span);
+        }
+        lines.push(Line::from(spans));
+    }
+
+    let board = Paragraph::new(lines);
+    frame.render_widget(board, inner);
+}
+
+fn render_next(frame: &mut Frame, area: Rect, state: &GameState) {
+    let block = Block::default().title("NEXT").borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let inner_h = inner.height as usize;
+    let inner_w = inner.width as usize;
+    let preview_h = 4usize;
+    let preview_w = 4usize;
+    let next = state.peek_next(5);
+
+    let total_preview_h = preview_h * 5;
+    let gap = if inner_h > total_preview_h {
+        (inner_h - total_preview_h) / 6
+    } else {
+        0
+    };
+    let top_pad = gap;
+
+    let mut grid: Vec<Vec<Option<PieceType>>> = vec![vec![None; preview_w]; inner_h];
+    for (i, kind) in next.iter().enumerate() {
+        let base_y = top_pad + i * (preview_h + gap);
+        if base_y + preview_h > inner_h {
+            break;
+        }
+        let piece = Piece {
+            kind: *kind,
+            rotation: crate::core::piece::Rotation(0),
+            x: 0,
+            y: 0,
+        };
+        for (x, y) in piece.blocks() {
+            if x >= 0 && x < preview_w as i32 && y >= 0 && y < preview_h as i32 {
+                let gy = base_y + y as usize;
+                let gx = x as usize;
+                grid[gy][gx] = Some(*kind);
+            }
+        }
+    }
+
+    let inner_w_chars = inner_w as i32;
+    let preview_w_chars = (preview_w * 2) as i32;
+    let pad = ((inner_w_chars - preview_w_chars).max(0) / 2) as usize;
+
+    let mut lines: Vec<Line> = Vec::with_capacity(inner_h);
+    for y in 0..inner_h {
+        let mut spans: Vec<Span> = Vec::new();
+        if pad > 0 {
+            spans.push(Span::raw(" ".repeat(pad)));
+        }
+        for x in 0..preview_w {
+            if let Some(kind) = grid[y][x] {
+                spans.push(Span::styled("██", Style::default().fg(piece_color(kind))));
+            } else {
+                spans.push(Span::raw("  "));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+
+    let widget = Paragraph::new(lines);
+    frame.render_widget(widget, inner);
+}
+
+fn piece_preview_lines(kind: Option<PieceType>) -> Vec<Line<'static>> {
+    let mut grid = [[false; 4]; 4];
+    let mut color = Color::White;
+    if let Some(kind) = kind {
+        color = piece_color(kind);
+        let piece = Piece {
+            kind,
+            rotation: crate::core::piece::Rotation(0),
+            x: 0,
+            y: 0,
+        };
+        for (x, y) in piece.blocks() {
+            if x >= 0 && x < 4 && y >= 0 && y < 4 {
+                grid[y as usize][x as usize] = true;
+            }
+        }
+    }
+
+    let mut lines = Vec::with_capacity(4);
+    for y in 0..4 {
+        let mut spans = Vec::with_capacity(4);
+        for x in 0..4 {
+            if grid[y][x] {
+                spans.push(Span::styled("██", Style::default().fg(color)));
+            } else {
+                spans.push(Span::raw("  "));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+fn block_at(blocks: [(i32, i32); 4], x: i32, y: i32) -> Option<()> {
+    for (bx, by) in blocks {
+        if bx == x && by == y {
+            return Some(());
+        }
+    }
+    None
+}
+
+fn piece_color(kind: PieceType) -> Color {
+    match kind {
+        PieceType::I => Color::Cyan,
+        PieceType::O => Color::Yellow,
+        PieceType::T => Color::Magenta,
+        PieceType::S => Color::Green,
+        PieceType::Z => Color::Red,
+        PieceType::J => Color::Blue,
+        PieceType::L => Color::LightYellow,
+    }
+}
