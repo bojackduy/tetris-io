@@ -309,12 +309,6 @@ pub fn run() -> io::Result<()> {
                 app.session.input.soft_drop_active(),
             );
             handle_events(&mut app.session.state, &events);
-            if commands.iter().any(|c| matches!(c, Command::HardDrop)) {
-                app.session
-                    .input
-                    .lockout_movement(now, app.config.das_ms);
-            }
-
             if events.iter().any(|e| matches!(e, GameEvent::GameOver)) {
                 app.session.game_over_time = Some(app.session.elapsed_secs(now));
                 app.session.input.clear_motion();
