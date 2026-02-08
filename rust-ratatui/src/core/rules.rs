@@ -198,9 +198,11 @@ fn lock_piece(state: &mut GameState, events: &mut Vec<Event>) {
         state.board.set(x, y, Some(state.active.kind));
     }
     events.push(Event::Locked);
+    let cleared_mask = full_rows_mask(&state.board);
     let cleared = state.board.clear_full_rows();
     if cleared > 0 {
         events.push(Event::LinesCleared(cleared as u8));
+        let _ = state.apply_row_clear_mask(&cleared_mask);
     }
     let perfect_clear = cleared > 0 && is_board_empty(&state.board);
     apply_scoring(state, spin, cleared as u8, perfect_clear);
@@ -613,6 +615,14 @@ fn is_all_mini(board: &Board, piece: Piece) -> bool {
     !can_place(board, offset_piece(piece, -1, 0))
         && !can_place(board, offset_piece(piece, 1, 0))
         && !can_place(board, offset_piece(piece, 0, 1))
+}
+
+fn full_rows_mask(board: &Board) -> [bool; BOARD_HEIGHT] {
+    let mut mask = [false; BOARD_HEIGHT];
+    for (y, row) in board.cells().iter().enumerate() {
+        mask[y] = row.iter().all(|cell| cell.is_some());
+    }
+    mask
 }
 
 fn is_board_empty(board: &Board) -> bool {

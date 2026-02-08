@@ -175,10 +175,15 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
         .block(Block::default().title("COMBO").borders(Borders::ALL));
     frame.render_widget(combo, chunks[1]);
 
+    let (lines_label, lines_value) = if state.garbage_remaining > 0 {
+        ("Garbage", state.garbage_remaining)
+    } else {
+        ("Lines", state.lines)
+    };
     let score_lines = vec![
         Line::from(format!("Score {:06}", state.score)),
         Line::from(format!("Level {:02}", state.level)),
-        Line::from(format!("Lines {:02}", state.lines)),
+        Line::from(format!("{} {:02}", lines_label, lines_value)),
         Line::from(format!(
             "{} {:02}:{:02}",
             ctx.time_label,

@@ -17,14 +17,30 @@ use crate::core::rng::random_seed;
 use crate::core::rules::{step, RulesConfig};
 use crate::core::state::GameState;
 use crate::core::timing::clamp_dt_ms;
+use crate::core::board::PLAY_HEIGHT;
 use crate::ui::input::{InputConfig, InputState, KeyBindings};
 use crate::ui::render::{
     render_game, render_game_over, render_menu, render_pause, render_settings, RenderContext,
 };
 
-const MENU_ITEMS: [&str; 5] = ["New Game", "Blitz 2:00", "40 Lines", "Settings", "Quit"];
+const MENU_ITEMS: [&str; 6] = ["New Game", "Blitz", "40 Lines", "Cheese Race", "Settings", "Quit"];
 const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
 const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
+const BLITZ_DEFAULT_SECS: u64 = 120;
+const BLITZ_MIN_SECS: u64 = 30;
+const BLITZ_MAX_SECS: u64 = 600;
+const BLITZ_STEP_SECS: u64 = 30;
+const BLITZ_LABEL_WIDTH: usize = 26;
+const FORTY_LINES_DEFAULT_TARGET: u32 = 40;
+const FORTY_LINES_MIN_TARGET: u32 = 10;
+const FORTY_LINES_MAX_TARGET: u32 = 200;
+const FORTY_LINES_STEP_TARGET: u32 = 10;
+const FORTY_LINES_LABEL_WIDTH: usize = 26;
+const CHEESE_DEFAULT_TARGET: u32 = 10;
+const CHEESE_MIN_TARGET: u32 = 10;
+const CHEESE_MAX_TARGET: u32 = PLAY_HEIGHT as u32;
+const CHEESE_STEP_TARGET: u32 = 1;
+const CHEESE_LABEL_WIDTH: usize = 26;
 const SETTINGS_ITEMS: [SettingItem; 12] = [
     SettingItem::Das,
     SettingItem::Arr,
@@ -54,6 +70,7 @@ enum GameMode {
     Endless,
     Blitz { duration_secs: u64 },
     FortyLines { target: u32 },
+    Cheese { target: u32 },
 }
 
 impl GameMode {
@@ -62,6 +79,7 @@ impl GameMode {
             GameMode::Endless => None,
             GameMode::Blitz { duration_secs } => Some(duration_secs),
             GameMode::FortyLines { .. } => None,
+            GameMode::Cheese { .. } => None,
         }
     }
 }
@@ -130,9 +148,14 @@ struct GameSession {
 impl GameSession {
     fn new(config: &AppConfig, mode: GameMode) -> Self {
         let now = Instant::now();
+        let seed = random_seed();
+        let mut state = GameState::new(seed);
+        if let GameMode::Cheese { target } = mode {
+            state.seed_cheese(target, seed);
+        }
         Self {
             mode,
-            state: GameState::new(random_seed()),
+            state,
             input: InputState::new(
                 InputConfig {
                     das_ms: config.das_ms,
@@ -184,6 +207,9 @@ struct App {
     config: AppConfig,
     screen: Screen,
     session: GameSession,
+    blitz_duration_secs: u64,
+    forty_lines_target: u32,
+    cheese_target: u32,
     exit: bool,
 }
 
@@ -195,6 +221,9 @@ impl App {
             config,
             screen: Screen::Menu { selected: 0 },
             session,
+            blitz_duration_secs: BLITZ_DEFAULT_SECS,
+            forty_lines_target: FORTY_LINES_DEFAULT_TARGET,
+            cheese_target: CHEESE_DEFAULT_TARGET,
             exit: false,
         }
     }
@@ -235,6 +264,9 @@ pub fn run() -> io::Result<()> {
                 screen,
                 config,
                 session,
+                blitz_duration_secs,
+                forty_lines_target,
+                cheese_target,
                 exit,
             } = &mut app;
             match screen {
@@ -259,6 +291,38 @@ pub fn run() -> io::Result<()> {
                         match key.code {
                             KeyCode::Up => move_selection(selected, MENU_ITEMS.len(), -1),
                             KeyCode::Down => move_selection(selected, MENU_ITEMS.len(), 1),
+                            KeyCode::Left => {
+                                if *selected == 1 {
+                                    *blitz_duration_secs = adjust_blitz_duration(
+                                        *blitz_duration_secs,
+                                        -1,
+                                    );
+                                } else if *selected == 2 {
+                                    *forty_lines_target = adjust_forty_lines_target(
+                                        *forty_lines_target,
+                                        -1,
+                                    );
+                                } else if *selected == 3 {
+                                    *cheese_target =
+                                        adjust_cheese_target(*cheese_target, -1);
+                                }
+                            }
+                            KeyCode::Right => {
+                                if *selected == 1 {
+                                    *blitz_duration_secs = adjust_blitz_duration(
+                                        *blitz_duration_secs,
+                                        1,
+                                    );
+                                } else if *selected == 2 {
+                                    *forty_lines_target = adjust_forty_lines_target(
+                                        *forty_lines_target,
+                                        1,
+                                    );
+                                } else if *selected == 3 {
+                                    *cheese_target =
+                                        adjust_cheese_target(*cheese_target, 1);
+                                }
+                            }
                             KeyCode::Enter => match *selected {
                                 0 => {
                                     *session = GameSession::new(config, GameMode::Endless);
@@ -268,7 +332,7 @@ pub fn run() -> io::Result<()> {
                                     *session = GameSession::new(
                                         config,
                                         GameMode::Blitz {
-                                            duration_secs: 120,
+                                            duration_secs: *blitz_duration_secs,
                                         },
                                     );
                                     *screen = Screen::Playing;
@@ -276,11 +340,22 @@ pub fn run() -> io::Result<()> {
                                 2 => {
                                     *session = GameSession::new(
                                         config,
-                                        GameMode::FortyLines { target: 40 },
+                                        GameMode::FortyLines {
+                                            target: *forty_lines_target,
+                                        },
                                     );
                                     *screen = Screen::Playing;
                                 }
                                 3 => {
+                                    *session = GameSession::new(
+                                        config,
+                                        GameMode::Cheese {
+                                            target: *cheese_target,
+                                        },
+                                    );
+                                    *screen = Screen::Playing;
+                                }
+                                4 => {
                                     *screen = Screen::Settings {
                                         selected: 0,
                                         capture: None,
@@ -421,6 +496,16 @@ pub fn run() -> io::Result<()> {
                 }
             }
 
+            if let GameMode::Cheese { .. } = app.session.mode {
+                if app.session.state.garbage_remaining == 0 {
+                    app.session.game_over_time = Some(app.session.elapsed_secs(now));
+                    app.session.state.game_over = true;
+                    app.session.input.clear_motion();
+                    app.screen = Screen::GameOver { selected: 0 };
+                    continue;
+                }
+            }
+
             let mut dt = now.duration_since(app.session.last_frame);
             app.session.last_frame = now;
             dt = Duration::from_millis(clamp_dt_ms(dt.as_millis() as u64, 50));
@@ -449,13 +534,23 @@ pub fn run() -> io::Result<()> {
 
         terminal.draw(|f| match app.screen {
             Screen::Menu { selected } => {
-                let items = MENU_ITEMS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+                let items = menu_items(
+                    app.blitz_duration_secs,
+                    app.forty_lines_target,
+                    app.cheese_target,
+                );
+                let footer = match selected {
+                    1 => "Enter: play   Left/Right: adjust time   Esc/Q: quit",
+                    2 => "Enter: play   Left/Right: adjust lines   Esc/Q: quit",
+                    3 => "Enter: play   Left/Right: adjust lines   Esc/Q: quit",
+                    _ => "Enter: select   Esc/Q: quit",
+                };
                 render_menu(
                     f,
                     "TETRIS MVP",
                     &items,
                     selected,
-                    "Enter: select   Esc/Q: quit",
+                    footer,
                 );
             }
             Screen::Settings { selected, capture } => {
@@ -472,6 +567,7 @@ pub fn run() -> io::Result<()> {
                     GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
                     GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
                     GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
+                    GameMode::Cheese { .. } => (app.session.elapsed_secs(now), "Time"),
                 };
                 render_game(
                     f,
@@ -487,9 +583,11 @@ pub fn run() -> io::Result<()> {
                     GameMode::Endless => app.session.elapsed_secs(now),
                     GameMode::Blitz { duration_secs } => duration_secs,
                     GameMode::FortyLines { .. } => app.session.elapsed_secs(now),
+                    GameMode::Cheese { .. } => app.session.elapsed_secs(now),
                 };
                 let title = match app.session.mode {
                     GameMode::FortyLines { .. } => "40 LINES",
+                    GameMode::Cheese { .. } => "CHEESE RACE",
                     _ => {
                         if app.session.time_up {
                             "TIME UP"
@@ -514,6 +612,7 @@ pub fn run() -> io::Result<()> {
                     GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
                     GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
                     GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
+                    GameMode::Cheese { .. } => (app.session.elapsed_secs(now), "Time"),
                 };
                 render_pause(
                     f,
@@ -573,6 +672,55 @@ fn settings_lines(config: &AppConfig) -> Vec<String> {
         .collect()
 }
 
+fn menu_items(
+    blitz_duration_secs: u64,
+    forty_lines_target: u32,
+    cheese_target: u32,
+) -> Vec<String> {
+    MENU_ITEMS
+        .iter()
+        .enumerate()
+        .map(|(idx, label)| match idx {
+            1 => format_blitz_menu_item(blitz_duration_secs),
+            2 => format_forty_lines_menu_item(forty_lines_target),
+            3 => format_cheese_menu_item(cheese_target),
+            _ => (*label).to_string(),
+        })
+        .collect()
+}
+
+fn format_blitz_menu_item(duration_secs: u64) -> String {
+    let time_label = format_time_mmss(duration_secs);
+    format!(
+        "{:<width$} {}",
+        "Blitz",
+        time_label,
+        width = BLITZ_LABEL_WIDTH
+    )
+}
+
+fn format_time_mmss(duration_secs: u64) -> String {
+    format!("{}:{:02}", duration_secs / 60, duration_secs % 60)
+}
+
+fn format_forty_lines_menu_item(target: u32) -> String {
+    format!(
+        "{:<width$} {}",
+        "40 Lines",
+        target,
+        width = FORTY_LINES_LABEL_WIDTH
+    )
+}
+
+fn format_cheese_menu_item(target: u32) -> String {
+    format!(
+        "{:<width$} {}",
+        "Cheese Race",
+        target,
+        width = CHEESE_LABEL_WIDTH
+    )
+}
+
 fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
     let delta = direction as i64;
     match item {
@@ -581,6 +729,31 @@ fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
         SettingItem::Dcd => config.dcd_ms = clamp_u64(config.dcd_ms, delta * 5, 0, 500),
         _ => {}
     }
+}
+
+fn adjust_blitz_duration(duration_secs: u64, direction: i32) -> u64 {
+    let delta = direction as i64 * BLITZ_STEP_SECS as i64;
+    clamp_u64(duration_secs, delta, BLITZ_MIN_SECS, BLITZ_MAX_SECS)
+}
+
+fn adjust_forty_lines_target(target: u32, direction: i32) -> u32 {
+    let delta = direction as i64 * FORTY_LINES_STEP_TARGET as i64;
+    clamp_u64(
+        target as u64,
+        delta,
+        FORTY_LINES_MIN_TARGET as u64,
+        FORTY_LINES_MAX_TARGET as u64,
+    ) as u32
+}
+
+fn adjust_cheese_target(target: u32, direction: i32) -> u32 {
+    let delta = direction as i64 * CHEESE_STEP_TARGET as i64;
+    clamp_u64(
+        target as u64,
+        delta,
+        CHEESE_MIN_TARGET as u64,
+        CHEESE_MAX_TARGET as u64,
+    ) as u32
 }
 
 fn apply_binding(config: &mut AppConfig, item: SettingItem, code: KeyCode) {

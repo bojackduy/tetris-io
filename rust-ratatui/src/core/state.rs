@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::core::board::Board;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+use crate::core::board::{Board, BOARD_HEIGHT, BOARD_WIDTH, PLAY_HEIGHT};
 use crate::core::piece::{Piece, PieceType, Rotation};
 use crate::core::rng::{BagRng, PieceRng};
 
@@ -28,6 +31,8 @@ pub struct GameState {
     pub lines: u32,
     pub score: u32,
     pub level: u32,
+    pub garbage_rows: [bool; BOARD_HEIGHT],
+    pub garbage_remaining: u32,
 }
 
 impl GameState {
@@ -58,6 +63,8 @@ impl GameState {
             lines: 0,
             score: 0,
             level: 1,
+            garbage_rows: [false; BOARD_HEIGHT],
+            garbage_remaining: 0,
         }
     }
 
@@ -85,5 +92,56 @@ impl GameState {
 
     pub fn peek_next(&self, count: usize) -> Vec<PieceType> {
         self.queue.iter().take(count).copied().collect()
+    }
+
+    pub fn seed_cheese(&mut self, target_lines: u32, seed: u64) {
+        let max_lines = PLAY_HEIGHT as u32;
+        let lines = target_lines.min(max_lines);
+        if lines == 0 {
+            return;
+        }
+
+        self.garbage_rows = [false; BOARD_HEIGHT];
+        self.garbage_remaining = lines;
+
+        let mut rng = StdRng::seed_from_u64(seed ^ 0x9E3779B97F4A7C15);
+        for i in 0..lines {
+            let row = BOARD_HEIGHT - 1 - i as usize;
+            self.garbage_rows[row] = true;
+            let hole = rng.gen_range(0..BOARD_WIDTH);
+            for x in 0..BOARD_WIDTH {
+                if x != hole {
+                    self.board.set(x as i32, row as i32, Some(PieceType::O));
+                }
+            }
+        }
+    }
+
+    pub fn apply_row_clear_mask(&mut self, cleared_mask: &[bool; BOARD_HEIGHT]) -> u32 {
+        if self.garbage_remaining == 0 {
+            return 0;
+        }
+
+        let mut cleared_garbage = 0u32;
+        let mut dst = BOARD_HEIGHT as i32 - 1;
+        for src in (0..BOARD_HEIGHT as i32).rev() {
+            if cleared_mask[src as usize] {
+                if self.garbage_rows[src as usize] {
+                    cleared_garbage = cleared_garbage.saturating_add(1);
+                }
+            } else {
+                if dst != src {
+                    self.garbage_rows[dst as usize] = self.garbage_rows[src as usize];
+                }
+                dst -= 1;
+            }
+        }
+        while dst >= 0 {
+            self.garbage_rows[dst as usize] = false;
+            dst -= 1;
+        }
+
+        self.garbage_remaining = self.garbage_remaining.saturating_sub(cleared_garbage);
+        cleared_garbage
     }
 }
