@@ -631,6 +631,34 @@ mod tests {
     use super::*;
     use crate::core::piece::PieceType;
     use crate::core::state::GameState;
+    use crate::core::command::Command;
+    use crate::core::board::{BOARD_HEIGHT, BOARD_WIDTH};
+
+    fn run_commands(state: &mut GameState, commands: &[Command]) -> Vec<Event> {
+        let cfg = RulesConfig {
+            gravity_ms: 999_999,
+            soft_drop_factor: 1,
+            lock_delay_ms: 999_999,
+            lock_reset_limit: 10,
+        };
+        step(state, cfg, 0, commands, false)
+    }
+
+    fn state_with(board: Board, piece: Piece) -> GameState {
+        let mut state = GameState::new(1);
+        state.board = board;
+        state.active = piece;
+        state
+    }
+
+    fn fill_row_except(board: &mut Board, y: i32, holes: &[i32]) {
+        for x in 0..BOARD_WIDTH as i32 {
+            if holes.contains(&x) {
+                continue;
+            }
+            board.set(x, y, Some(PieceType::I));
+        }
+    }
 
     #[test]
     fn collision_detected() {
@@ -690,5 +718,83 @@ mod tests {
         assert_eq!(rotated.rotation.0, 1);
         assert_eq!(rotated.x, 7);
         assert_eq!(rotated.y, 1);
+    }
+
+    #[test]
+    fn perfect_clear_single_scores_and_labels() {
+        let mut board = Board::new();
+        let bottom = BOARD_HEIGHT as i32 - 1;
+        fill_row_except(&mut board, bottom, &[6, 7, 8, 9]);
+
+        let piece = Piece {
+            kind: PieceType::I,
+            rotation: Rotation(0),
+            x: 6,
+            y: bottom - 1,
+        };
+        let mut state = state_with(board, piece);
+
+        run_commands(&mut state, &[Command::HardDrop]);
+
+        let label = state.last_clear_label.as_ref().expect("label should exist");
+        assert!(label.contains("Single"));
+        assert!(label.contains("Perfect Clear"));
+        assert_eq!(state.lines, 1);
+        assert_eq!(state.score, 3650);
+    }
+
+    #[test]
+    fn combo_scoring_accumulates() {
+        let mut board = Board::new();
+        let bottom = BOARD_HEIGHT as i32 - 1;
+        board.set(0, 0, Some(PieceType::I));
+
+        fill_row_except(&mut board, bottom, &[6, 7, 8, 9]);
+        let piece = Piece {
+            kind: PieceType::I,
+            rotation: Rotation(0),
+            x: 6,
+            y: bottom - 1,
+        };
+        let mut state = state_with(board, piece);
+        run_commands(&mut state, &[Command::HardDrop]);
+
+        fill_row_except(&mut state.board, bottom, &[6, 7, 8, 9]);
+        state.active = Piece {
+            kind: PieceType::I,
+            rotation: Rotation(0),
+            x: 6,
+            y: bottom - 1,
+        };
+        run_commands(&mut state, &[Command::HardDrop]);
+
+        let label = state.last_clear_label.as_ref().expect("label should exist");
+        assert!(label.contains("Combo x2"));
+        assert_eq!(state.combo, 2);
+        assert_eq!(state.score, 350);
+    }
+
+    #[test]
+    fn t_spin_double_label_and_lines() {
+        let mut board = Board::new();
+        let bottom = BOARD_HEIGHT as i32 - 1;
+        fill_row_except(&mut board, bottom, &[4, 5, 6]);
+        fill_row_except(&mut board, bottom - 1, &[5]);
+        board.set(0, 0, Some(PieceType::I));
+
+        let piece = Piece {
+            kind: PieceType::T,
+            rotation: Rotation(0),
+            x: 4,
+            y: bottom - 1,
+        };
+        let mut state = state_with(board, piece);
+        state.last_action_rotation = true;
+
+        run_commands(&mut state, &[Command::HardDrop]);
+
+        let label = state.last_clear_label.as_ref().expect("label should exist");
+        assert!(label.contains("T-Spin Double"));
+        assert_eq!(state.lines, 2);
     }
 }
