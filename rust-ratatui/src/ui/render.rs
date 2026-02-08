@@ -115,6 +115,33 @@ pub fn render_game_over(
     render_list(frame, &items, selected, chunks[1]);
 }
 
+pub fn render_pause(
+    frame: &mut Frame,
+    state: &GameState,
+    ctx: RenderContext,
+    selected: usize,
+) {
+    render_game(frame, state, ctx);
+
+    let area = frame.size();
+    let width = area.width.min(42).max(24);
+    let height = area.height.min(10).max(8);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default().title("PAUSED").borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0)])
+        .split(inner);
+
+    let items = ["Resume", "Menu", "Quit"];
+    render_list(frame, &items, selected, chunks[0]);
+}
+
 fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)

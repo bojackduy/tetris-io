@@ -18,10 +18,13 @@ use crate::core::rules::{step, RulesConfig};
 use crate::core::state::GameState;
 use crate::core::timing::clamp_dt_ms;
 use crate::ui::input::{InputConfig, InputState, KeyBindings};
-use crate::ui::render::{render_game, render_game_over, render_menu, render_settings, RenderContext};
+use crate::ui::render::{
+    render_game, render_game_over, render_menu, render_pause, render_settings, RenderContext,
+};
 
 const MENU_ITEMS: [&str; 3] = ["New Game", "Settings", "Quit"];
 const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
+const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
 const SETTINGS_ITEMS: [SettingItem; 12] = [
     SettingItem::Das,
     SettingItem::Arr,
@@ -42,6 +45,7 @@ enum Screen {
     Menu { selected: usize },
     Settings { selected: usize, capture: Option<SettingItem> },
     Playing,
+    Paused { selected: usize },
     GameOver { selected: usize },
 }
 
@@ -99,6 +103,8 @@ struct GameSession {
     input: InputState,
     start_time: Instant,
     last_frame: Instant,
+    paused_at: Option<Instant>,
+    paused_total: Duration,
     game_over_time: Option<u64>,
 }
 
@@ -117,13 +123,33 @@ impl GameSession {
             ),
             start_time: now,
             last_frame: now,
+            paused_at: None,
+            paused_total: Duration::from_secs(0),
             game_over_time: None,
         }
     }
 
     fn elapsed_secs(&self, now: Instant) -> u64 {
-        self.game_over_time
-            .unwrap_or_else(|| now.duration_since(self.start_time).as_secs())
+        self.game_over_time.unwrap_or_else(|| {
+            let effective_now = self.paused_at.unwrap_or(now);
+            let elapsed = effective_now
+                .duration_since(self.start_time)
+                .saturating_sub(self.paused_total);
+            elapsed.as_secs()
+        })
+    }
+
+    fn pause(&mut self, now: Instant) {
+        if self.paused_at.is_none() {
+            self.paused_at = Some(now);
+        }
+    }
+
+    fn resume(&mut self, now: Instant) {
+        if let Some(paused_at) = self.paused_at.take() {
+            self.paused_total = self.paused_total.saturating_add(now.duration_since(paused_at));
+            self.last_frame = now;
+        }
     }
 }
 
@@ -186,6 +212,16 @@ pub fn run() -> io::Result<()> {
             } = &mut app;
             match screen {
                 Screen::Playing => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if matches!(key.kind, KeyEventKind::Press)
+                            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+                        {
+                            session.pause(now);
+                            session.input.clear_motion();
+                            *screen = Screen::Paused { selected: 0 };
+                            continue;
+                        }
+                    }
                     session.input.handle_event(ev, now, &mut commands);
                 }
                 Screen::Menu { selected } => {
@@ -272,6 +308,35 @@ pub fn run() -> io::Result<()> {
                         }
                     }
                 }
+                Screen::Paused { selected } => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if matches!(key.kind, KeyEventKind::Press)
+                            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P') | KeyCode::Esc)
+                        {
+                            session.resume(now);
+                            *screen = Screen::Playing;
+                            continue;
+                        }
+
+                        if !is_press_or_repeat(key.kind) {
+                            continue;
+                        }
+
+                        match key.code {
+                            KeyCode::Up => move_selection(selected, PAUSE_ITEMS.len(), -1),
+                            KeyCode::Down => move_selection(selected, PAUSE_ITEMS.len(), 1),
+                            KeyCode::Enter => match *selected {
+                                0 => {
+                                    session.resume(now);
+                                    *screen = Screen::Playing;
+                                }
+                                1 => *screen = Screen::Menu { selected: 0 },
+                                _ => *exit = true,
+                            },
+                            _ => {}
+                        }
+                    }
+                }
             }
             if app.exit {
                 break;
@@ -347,6 +412,15 @@ pub fn run() -> io::Result<()> {
             Screen::GameOver { selected } => {
                 let elapsed_secs = app.session.elapsed_secs(now);
                 render_game_over(
+                    f,
+                    &app.session.state,
+                    RenderContext { elapsed_secs },
+                    selected,
+                );
+            }
+            Screen::Paused { selected } => {
+                let elapsed_secs = app.session.elapsed_secs(now);
+                render_pause(
                     f,
                     &app.session.state,
                     RenderContext { elapsed_secs },
