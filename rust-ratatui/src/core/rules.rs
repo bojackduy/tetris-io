@@ -108,24 +108,22 @@ pub fn step(
     let was_grounded = state.grounded;
     let grounded_now = !can_place(&state.board, offset_piece(state.active, 0, 1));
 
-    if !grounded_now {
+    if grounded_now {
+        if !state.lock_started {
+            state.lock_started = true;
+            state.lock_delay_ms = 0;
+        } else if was_grounded && moved_or_rotated && state.lock_reset_count < cfg.lock_reset_limit {
+            state.lock_delay_ms = 0;
+            state.lock_reset_count = state.lock_reset_count.saturating_add(1);
+        }
+
+        state.grounded = true;
+        state.lock_delay_ms = state.lock_delay_ms.saturating_add(dt_ms);
+        if state.lock_delay_ms >= cfg.lock_delay_ms {
+            lock_piece(state, &mut events);
+        }
+    } else {
         state.grounded = false;
-        state.lock_delay_ms = 0;
-        state.lock_reset_count = 0;
-        return events;
-    }
-
-    if !was_grounded {
-        state.lock_delay_ms = 0;
-    } else if moved_or_rotated && state.lock_reset_count < cfg.lock_reset_limit {
-        state.lock_delay_ms = 0;
-        state.lock_reset_count = state.lock_reset_count.saturating_add(1);
-    }
-
-    state.grounded = true;
-    state.lock_delay_ms = state.lock_delay_ms.saturating_add(dt_ms);
-    if state.lock_delay_ms >= cfg.lock_delay_ms {
-        lock_piece(state, &mut events);
     }
 
     events
@@ -205,20 +203,44 @@ fn try_rotate(state: &mut GameState, dir: RotationDir) -> bool {
 }
 
 fn try_rotate_180(state: &mut GameState) -> bool {
-    let original = state.active;
-    if let Some(first) = rotate_with_kicks(&state.board, original, RotationDir::Cw) {
-        if let Some(second) = rotate_with_kicks(&state.board, first, RotationDir::Cw) {
-            state.active = second;
-            return true;
+    if let Some(piece) = rotate_180_with_kicks(&state.board, state.active) {
+        state.active = piece;
+        true
+    } else {
+        false
+    }
+}
+
+fn rotate_180_with_kicks(board: &Board, piece: Piece) -> Option<Piece> {
+    let target = piece.rotation.half();
+    if piece.kind == PieceType::O {
+        let candidate = Piece { rotation: target, ..piece };
+        return if can_place(board, candidate) { Some(candidate) } else { None };
+    }
+
+    let kicks = kicks_180(piece.rotation);
+    for (dx, dy) in kicks {
+        let candidate = Piece {
+            rotation: target,
+            x: piece.x + dx,
+            y: piece.y + dy,
+            ..piece
+        };
+        if can_place(board, candidate) {
+            return Some(candidate);
         }
     }
-    if let Some(first) = rotate_with_kicks(&state.board, original, RotationDir::Ccw) {
-        if let Some(second) = rotate_with_kicks(&state.board, first, RotationDir::Ccw) {
-            state.active = second;
-            return true;
-        }
+    None
+}
+
+fn kicks_180(from: Rotation) -> &'static [(i32, i32); 6] {
+    match from.0 % 4 {
+        0 => &KICKS_180_NS,
+        1 => &KICKS_180_EW,
+        2 => &KICKS_180_SN,
+        3 => &KICKS_180_WE,
+        _ => &KICKS_180_NS,
     }
-    false
 }
 
 fn rotate_with_kicks(board: &Board, piece: Piece, dir: RotationDir) -> Option<Piece> {
@@ -314,6 +336,43 @@ const I_KICKS_CW: [[(i32, i32); 5]; 4] = [
     [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
     // L -> 0 (mirror of L -> 2)
     [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+];
+
+// TETR.IO-style 180 kicks (compact 6-test table).
+const KICKS_180_NS: [(i32, i32); 6] = [
+    (0, 0),
+    (0, -1),
+    (-1, 1),
+    (1, 1),
+    (-1, 0),
+    (1, 0),
+];
+
+const KICKS_180_SN: [(i32, i32); 6] = [
+    (0, 0),
+    (0, 1),
+    (-1, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+];
+
+const KICKS_180_EW: [(i32, i32); 6] = [
+    (0, 0),
+    (-1, 0),
+    (1, 1),
+    (1, -1),
+    (0, 1),
+    (0, -1),
+];
+
+const KICKS_180_WE: [(i32, i32); 6] = [
+    (0, 0),
+    (1, 0),
+    (-1, -1),
+    (-1, 1),
+    (0, -1),
+    (0, 1),
 ];
 
 fn offset_piece(piece: Piece, dx: i32, dy: i32) -> Piece {

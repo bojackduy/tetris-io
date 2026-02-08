@@ -20,6 +20,7 @@ pub struct GameState {
     pub lock_delay_ms: u64,
     pub lock_reset_count: u32,
     pub grounded: bool,
+    pub lock_started: bool,
     pub lines: u32,
     pub score: u32,
     pub level: u32,
@@ -45,6 +46,7 @@ impl GameState {
             lock_delay_ms: 0,
             lock_reset_count: 0,
             grounded: false,
+            lock_started: false,
             lines: 0,
             score: 0,
             level: 1,
@@ -62,6 +64,7 @@ impl GameState {
         self.lock_delay_ms = 0;
         self.lock_reset_count = 0;
         self.grounded = false;
+        self.lock_started = false;
     }
 
     pub fn pop_next(&mut self) -> PieceType {
