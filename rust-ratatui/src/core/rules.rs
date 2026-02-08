@@ -33,12 +33,6 @@ pub fn step(
     soft_drop_active: bool,
 ) -> Vec<Event> {
     let mut events = Vec::new();
-    if state.clear_display_ms > 0 {
-        state.clear_display_ms = state.clear_display_ms.saturating_sub(dt_ms);
-        if state.clear_display_ms == 0 {
-            state.last_clear_label = None;
-        }
-    }
     if state.game_over {
         return events;
     }
@@ -433,8 +427,6 @@ fn can_place(board: &Board, piece: Piece) -> bool {
     true
 }
 
-const CLEAR_DISPLAY_MS: u64 = 2000;
-
 fn apply_scoring(state: &mut GameState, spin: Option<SpinKind>, cleared: u8, perfect_clear: bool) {
     let had_clear = cleared > 0;
     if had_clear {
@@ -481,7 +473,6 @@ fn apply_scoring(state: &mut GameState, spin: Option<SpinKind>, cleared: u8, per
         }
         if !parts.is_empty() {
             state.last_clear_label = Some(parts.join(" | "));
-            state.clear_display_ms = CLEAR_DISPLAY_MS;
         }
     }
 }

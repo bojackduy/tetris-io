@@ -116,9 +116,6 @@ pub fn render_game_over(
 }
 
 fn combo_lines(state: &GameState) -> Vec<Line<'static>> {
-    if state.clear_display_ms == 0 {
-        return vec![Line::from("(empty)")];
-    }
     let label = match &state.last_clear_label {
         Some(label) if !label.is_empty() => label,
         _ => return vec![Line::from("(empty)")],
@@ -214,7 +211,7 @@ fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
                         .add_modifier(Modifier::DIM),
                 )
             } else {
-                Span::styled(". ", Style::default().fg(Color::DarkGray))
+                Span::styled("· ", Style::default().fg(Color::Gray))
             };
             spans.push(span);
         }
