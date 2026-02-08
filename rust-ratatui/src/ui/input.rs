@@ -25,7 +25,7 @@ impl HeldKey {
         if !self.is_down {
             self.pressed_at = Some(now);
             self.last_repeat = Some(now);
-            self.repeat_armed = false;
+            self.repeat_armed = true;
         } else {
             self.repeat_armed = true;
         }
@@ -42,7 +42,7 @@ impl HeldKey {
         if !self.is_down {
             self.pressed_at = Some(now - Duration::from_millis(offset));
             self.last_repeat = Some(now);
-            self.repeat_armed = false;
+            self.repeat_armed = true;
         } else {
             self.repeat_armed = true;
         }
@@ -65,6 +65,8 @@ pub struct InputState {
     right: HeldKey,
     down: HeldKey,
     last_dir: Option<Dir>,
+    lockout_until: Option<Instant>,
+    enhanced_input: bool,
 }
 
 impl InputState {
@@ -75,6 +77,8 @@ impl InputState {
             right: HeldKey::default(),
             down: HeldKey::default(),
             last_dir: None,
+            lockout_until: None,
+            enhanced_input: false,
         }
     }
 
@@ -85,6 +89,9 @@ impl InputState {
     }
 
     pub fn repeat_commands(&mut self, now: Instant, out: &mut Vec<Command>) {
+        if !self.enhanced_input {
+            return;
+        }
         let short_timeout_ms = 180;
         let long_timeout_ms = (self.cfg.das_ms + self.cfg.arr_ms * 2).max(1000);
         let left_armed = self.left.repeat_armed;
@@ -111,28 +118,65 @@ impl InputState {
                 if self.left.repeat_armed && should_repeat(self.left, now, self.cfg.das_ms, self.cfg.arr_ms) {
                     out.push(Command::MoveLeft);
                     self.left.last_repeat = Some(now);
+                    self.left.last_event = Some(now);
                 }
             }
             Some(Dir::Right) => {
                 if self.right.repeat_armed && should_repeat(self.right, now, self.cfg.das_ms, self.cfg.arr_ms) {
                     out.push(Command::MoveRight);
                     self.right.last_repeat = Some(now);
+                    self.right.last_event = Some(now);
                 }
             }
             None => {
                 if self.left.repeat_armed && should_repeat(self.left, now, self.cfg.das_ms, self.cfg.arr_ms) {
                     out.push(Command::MoveLeft);
                     self.left.last_repeat = Some(now);
+                    self.left.last_event = Some(now);
                 }
                 if self.right.repeat_armed && should_repeat(self.right, now, self.cfg.das_ms, self.cfg.arr_ms) {
                     out.push(Command::MoveRight);
                     self.right.last_repeat = Some(now);
+                    self.right.last_event = Some(now);
                 }
             }
         }
     }
 
     fn handle_key(&mut self, key: KeyEvent, now: Instant, out: &mut Vec<Command>) {
+        if matches!(key.kind, KeyEventKind::Repeat | KeyEventKind::Release)
+            && matches!(key.code, KeyCode::Left | KeyCode::Right | KeyCode::Down)
+        {
+            self.enhanced_input = true;
+        }
+
+        if !self.enhanced_input {
+            match (key.code, key.kind) {
+                (KeyCode::Left, KeyEventKind::Press) => {
+                    out.push(Command::MoveLeft);
+                    return;
+                }
+                (KeyCode::Right, KeyEventKind::Press) => {
+                    out.push(Command::MoveRight);
+                    return;
+                }
+                (KeyCode::Down, KeyEventKind::Press) => {
+                    out.push(Command::SoftDrop);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        if self.lockout_active(now) {
+            match (key.code, key.kind) {
+                (KeyCode::Left, KeyEventKind::Release) => self.left.release(),
+                (KeyCode::Right, KeyEventKind::Release) => self.right.release(),
+                (KeyCode::Down, KeyEventKind::Release) => self.down.release(),
+                _ => {}
+            }
+            return;
+        }
         match (key.code, key.kind) {
             (KeyCode::Left, KeyEventKind::Press) => {
                 self.right.release();
@@ -204,6 +248,28 @@ impl InputState {
 
     pub fn soft_drop_active(&self) -> bool {
         self.down.is_down
+    }
+
+    pub fn clear_motion(&mut self) {
+        self.left.release();
+        self.right.release();
+        self.down.release();
+        self.last_dir = None;
+    }
+
+    pub fn lockout_movement(&mut self, now: Instant, duration_ms: u64) {
+        self.clear_motion();
+        self.lockout_until = Some(now + Duration::from_millis(duration_ms));
+    }
+
+    fn lockout_active(&mut self, now: Instant) -> bool {
+        if let Some(until) = self.lockout_until {
+            if now < until {
+                return true;
+            }
+            self.lockout_until = None;
+        }
+        false
     }
 }
 

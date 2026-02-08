@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event;
+use crossterm::event::{self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
@@ -21,6 +21,11 @@ pub fn run() -> io::Result<()> {
     let mut stdout = io::stdout();
     enable_raw_mode()?;
     stdout.execute(EnterAlternateScreen)?;
+    let _ = stdout.execute(PushKeyboardEnhancementFlags(
+        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
+    ));
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -73,6 +78,9 @@ pub fn run() -> io::Result<()> {
             input.soft_drop_active(),
         );
         handle_events(&mut state, &events);
+        if commands.iter().any(|c| matches!(c, Command::HardDrop)) {
+            input.lockout_movement(now, config.das_ms);
+        }
 
         let elapsed_secs = start_time.elapsed().as_secs();
         terminal.draw(|f| {
@@ -106,6 +114,7 @@ struct CleanupGuard;
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
         let mut stdout = io::stdout();
+        let _ = stdout.execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
         let _ = stdout.execute(LeaveAlternateScreen);
     }

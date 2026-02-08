@@ -14,7 +14,7 @@ impl Default for AppConfig {
             gravity_ms: 1000,
             frame_ms: 16,
             das_ms: 167,
-            arr_ms: 33,
+            arr_ms: 16,
             dcd_ms: 33,
             soft_drop_factor: 6,
         }
