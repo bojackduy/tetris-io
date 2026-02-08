@@ -1,7 +1,10 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+use crossterm::event::{
+    self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
@@ -9,13 +12,140 @@ use ratatui::Terminal;
 
 use crate::app::config::AppConfig;
 use crate::core::command::Command;
-use crate::core::events::Event;
+use crate::core::events::Event as GameEvent;
 use crate::core::rng::random_seed;
 use crate::core::rules::{step, RulesConfig};
 use crate::core::state::GameState;
 use crate::core::timing::clamp_dt_ms;
-use crate::ui::input::{InputConfig, InputState};
-use crate::ui::render::{render, RenderContext};
+use crate::ui::input::{InputConfig, InputState, KeyBindings};
+use crate::ui::render::{render_game, render_game_over, render_menu, render_settings, RenderContext};
+
+const MENU_ITEMS: [&str; 3] = ["New Game", "Settings", "Quit"];
+const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
+const SETTINGS_ITEMS: [SettingItem; 12] = [
+    SettingItem::Das,
+    SettingItem::Arr,
+    SettingItem::Dcd,
+    SettingItem::MoveLeft,
+    SettingItem::MoveRight,
+    SettingItem::SoftDrop,
+    SettingItem::RotateLeft,
+    SettingItem::RotateRight,
+    SettingItem::Rotate180,
+    SettingItem::Hold,
+    SettingItem::HardDrop,
+    SettingItem::Back,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Menu { selected: usize },
+    Settings { selected: usize, capture: Option<SettingItem> },
+    Playing,
+    GameOver { selected: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingItem {
+    Das,
+    Arr,
+    Dcd,
+    MoveLeft,
+    MoveRight,
+    SoftDrop,
+    RotateLeft,
+    RotateRight,
+    Rotate180,
+    Hold,
+    HardDrop,
+    Back,
+}
+
+impl SettingItem {
+    fn label(self) -> &'static str {
+        match self {
+            SettingItem::Das => "DAS (ms)",
+            SettingItem::Arr => "ARR (ms)",
+            SettingItem::Dcd => "DCD (ms)",
+            SettingItem::MoveLeft => "Move Left",
+            SettingItem::MoveRight => "Move Right",
+            SettingItem::SoftDrop => "Soft Drop",
+            SettingItem::RotateLeft => "Rotate Left",
+            SettingItem::RotateRight => "Rotate Right",
+            SettingItem::Rotate180 => "Rotate 180",
+            SettingItem::Hold => "Hold",
+            SettingItem::HardDrop => "Hard Drop",
+            SettingItem::Back => "Back",
+        }
+    }
+
+    fn is_binding(self) -> bool {
+        matches!(
+            self,
+            SettingItem::MoveLeft
+                | SettingItem::MoveRight
+                | SettingItem::SoftDrop
+                | SettingItem::RotateLeft
+                | SettingItem::RotateRight
+                | SettingItem::Rotate180
+                | SettingItem::Hold
+                | SettingItem::HardDrop
+        )
+    }
+}
+
+struct GameSession {
+    state: GameState,
+    input: InputState,
+    start_time: Instant,
+    last_frame: Instant,
+    game_over_time: Option<u64>,
+}
+
+impl GameSession {
+    fn new(config: &AppConfig) -> Self {
+        let now = Instant::now();
+        Self {
+            state: GameState::new(random_seed()),
+            input: InputState::new(
+                InputConfig {
+                    das_ms: config.das_ms,
+                    arr_ms: config.arr_ms,
+                    dcd_ms: config.dcd_ms,
+                },
+                config.key_bindings,
+            ),
+            start_time: now,
+            last_frame: now,
+            game_over_time: None,
+        }
+    }
+
+    fn elapsed_secs(&self, now: Instant) -> u64 {
+        self.game_over_time
+            .unwrap_or_else(|| now.duration_since(self.start_time).as_secs())
+    }
+}
+
+struct App {
+    config: AppConfig,
+    screen: Screen,
+    session: GameSession,
+    exit: bool,
+}
+
+impl App {
+    fn new() -> Self {
+        let config = AppConfig::default();
+        let session = GameSession::new(&config);
+        Self {
+            config,
+            screen: Screen::Menu { selected: 0 },
+            session,
+            exit: false,
+        }
+    }
+}
 
 pub fn run() -> io::Result<()> {
     let mut stdout = io::stdout();
@@ -33,79 +163,330 @@ pub fn run() -> io::Result<()> {
 
     let _cleanup = CleanupGuard;
 
-    let config = AppConfig::default();
-    let rules_cfg = RulesConfig {
-        gravity_ms: config.gravity_ms,
-        soft_drop_factor: config.soft_drop_factor,
-    };
-
-    let mut input = InputState::new(InputConfig {
-        das_ms: config.das_ms,
-        arr_ms: config.arr_ms,
-        dcd_ms: config.dcd_ms,
-    });
-
-    let mut state = GameState::new(random_seed());
-    let mut last_frame = Instant::now();
-    let start_time = Instant::now();
+    let mut app = App::new();
+    let mut last_tick = Instant::now();
 
     loop {
         let now = Instant::now();
-        let mut dt = now.duration_since(last_frame);
-        if dt < Duration::from_millis(config.frame_ms) {
-            std::thread::sleep(Duration::from_millis(config.frame_ms) - dt);
+        let frame_duration = Duration::from_millis(app.config.frame_ms);
+        if now.duration_since(last_tick) < frame_duration {
+            std::thread::sleep(frame_duration.saturating_sub(now.duration_since(last_tick)));
             continue;
         }
-        last_frame = now;
-        dt = Duration::from_millis(clamp_dt_ms(dt.as_millis() as u64, 50));
+        last_tick = now;
 
         let mut commands = Vec::new();
         while event::poll(Duration::from_millis(0))? {
             let ev = event::read()?;
-            input.handle_event(ev, now, &mut commands);
-        }
-        input.repeat_commands(now, &mut commands);
+            let App {
+                screen,
+                config,
+                session,
+                exit,
+            } = &mut app;
+            match screen {
+                Screen::Playing => {
+                    session.input.handle_event(ev, now, &mut commands);
+                }
+                Screen::Menu { selected } => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if !is_press_or_repeat(key.kind) {
+                            continue;
+                        }
+                        match key.code {
+                            KeyCode::Up => move_selection(selected, MENU_ITEMS.len(), -1),
+                            KeyCode::Down => move_selection(selected, MENU_ITEMS.len(), 1),
+                            KeyCode::Enter => match *selected {
+                                0 => {
+                                    *session = GameSession::new(config);
+                                    *screen = Screen::Playing;
+                                }
+                                1 => {
+                                    *screen = Screen::Settings {
+                                        selected: 0,
+                                        capture: None,
+                                    };
+                                }
+                                _ => *exit = true,
+                            },
+                            KeyCode::Esc => *exit = true,
+                            KeyCode::Char('q') | KeyCode::Char('Q') => *exit = true,
+                            _ => {}
+                        }
+                    }
+                }
+                Screen::Settings { selected, capture } => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if let Some(item) = capture {
+                            if matches!(key.kind, KeyEventKind::Press) {
+                                if matches!(key.code, KeyCode::Esc) {
+                                    *capture = None;
+                                } else {
+                                    apply_binding(config, *item, normalize_keycode(key.code));
+                                    *capture = None;
+                                }
+                            }
+                            continue;
+                        }
 
-        if commands.iter().any(|c| matches!(c, Command::Quit)) {
+                        if !is_press_or_repeat(key.kind) {
+                            continue;
+                        }
+
+                        let item = SETTINGS_ITEMS[*selected];
+                        match key.code {
+                            KeyCode::Up => move_selection(selected, SETTINGS_ITEMS.len(), -1),
+                            KeyCode::Down => move_selection(selected, SETTINGS_ITEMS.len(), 1),
+                            KeyCode::Left => adjust_setting(config, item, -1),
+                            KeyCode::Right => adjust_setting(config, item, 1),
+                            KeyCode::Enter => {
+                                if item == SettingItem::Back {
+                                    *screen = Screen::Menu { selected: 0 };
+                                } else if item.is_binding() {
+                                    *capture = Some(item);
+                                }
+                            }
+                            KeyCode::Esc => *screen = Screen::Menu { selected: 0 },
+                            _ => {}
+                        }
+                    }
+                }
+                Screen::GameOver { selected } => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if !is_press_or_repeat(key.kind) {
+                            continue;
+                        }
+                        match key.code {
+                            KeyCode::Up => move_selection(selected, GAME_OVER_ITEMS.len(), -1),
+                            KeyCode::Down => move_selection(selected, GAME_OVER_ITEMS.len(), 1),
+                            KeyCode::Enter => match *selected {
+                                0 => {
+                                    *session = GameSession::new(config);
+                                    *screen = Screen::Playing;
+                                }
+                                1 => *screen = Screen::Menu { selected: 0 },
+                                _ => *exit = true,
+                            },
+                            KeyCode::Esc => *screen = Screen::Menu { selected: 0 },
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if app.exit {
+                break;
+            }
+        }
+
+        if app.exit {
             break;
         }
 
-        let events = step(
-            &mut state,
-            rules_cfg,
-            dt.as_millis() as u64,
-            &commands,
-            input.soft_drop_active(),
-        );
-        handle_events(&mut state, &events);
-        if commands.iter().any(|c| matches!(c, Command::HardDrop)) {
-            input.lockout_movement(now, config.das_ms);
+        if matches!(app.screen, Screen::Playing) {
+            app.session.input.repeat_commands(now, &mut commands);
+            if commands.iter().any(|c| matches!(c, Command::Quit)) {
+                app.session.input.clear_motion();
+                app.screen = Screen::Menu { selected: 0 };
+                continue;
+            }
+
+            let mut dt = now.duration_since(app.session.last_frame);
+            app.session.last_frame = now;
+            dt = Duration::from_millis(clamp_dt_ms(dt.as_millis() as u64, 50));
+
+            let rules_cfg = RulesConfig {
+                gravity_ms: app.config.gravity_ms,
+                soft_drop_factor: app.config.soft_drop_factor,
+                lock_delay_ms: app.config.lock_delay_ms,
+                lock_reset_limit: app.config.lock_reset_limit,
+            };
+
+            let events = step(
+                &mut app.session.state,
+                rules_cfg,
+                dt.as_millis() as u64,
+                &commands,
+                app.session.input.soft_drop_active(),
+            );
+            handle_events(&mut app.session.state, &events);
+            if commands.iter().any(|c| matches!(c, Command::HardDrop)) {
+                app.session
+                    .input
+                    .lockout_movement(now, app.config.das_ms);
+            }
+
+            if events.iter().any(|e| matches!(e, GameEvent::GameOver)) {
+                app.session.game_over_time = Some(app.session.elapsed_secs(now));
+                app.session.input.clear_motion();
+                app.screen = Screen::GameOver { selected: 0 };
+            }
         }
 
-        let elapsed_secs = start_time.elapsed().as_secs();
-        terminal.draw(|f| {
-            render(
-                f,
-                &state,
-                RenderContext {
-                    elapsed_secs,
-                },
-            )
+        terminal.draw(|f| match app.screen {
+            Screen::Menu { selected } => {
+                let items = MENU_ITEMS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+                render_menu(
+                    f,
+                    "TETRIS MVP",
+                    &items,
+                    selected,
+                    "Enter: select   Esc/Q: quit",
+                );
+            }
+            Screen::Settings { selected, capture } => {
+                let items = settings_lines(&app.config);
+                let footer = if let Some(item) = capture {
+                    format!("Press a key for {} (Esc to cancel)", item.label())
+                } else {
+                    "Enter: rebind   Left/Right: adjust   Esc: back".to_string()
+                };
+                render_settings(f, "Settings", &items, selected, &footer);
+            }
+            Screen::Playing => {
+                let elapsed_secs = app.session.elapsed_secs(now);
+                render_game(
+                    f,
+                    &app.session.state,
+                    RenderContext { elapsed_secs },
+                );
+            }
+            Screen::GameOver { selected } => {
+                let elapsed_secs = app.session.elapsed_secs(now);
+                render_game_over(
+                    f,
+                    &app.session.state,
+                    RenderContext { elapsed_secs },
+                    selected,
+                );
+            }
         })?;
     }
 
     Ok(())
 }
 
-fn handle_events(state: &mut GameState, events: &[Event]) {
+fn handle_events(state: &mut GameState, events: &[GameEvent]) {
     for event in events {
         match event {
-            Event::LinesCleared(_) => {
-                // Scoring/level rules will be added later.
+            GameEvent::LinesCleared(_) => {
                 let _ = state;
             }
             _ => {}
         }
+    }
+}
+
+fn settings_lines(config: &AppConfig) -> Vec<String> {
+    let KeyBindings {
+        move_left,
+        move_right,
+        soft_drop,
+        rotate_left,
+        rotate_right,
+        rotate_180,
+        hold,
+        hard_drop,
+        ..
+    } = config.key_bindings;
+    SETTINGS_ITEMS
+        .iter()
+        .map(|item| match item {
+            SettingItem::Das => format!("{}: {}", item.label(), config.das_ms),
+            SettingItem::Arr => format!("{}: {}", item.label(), config.arr_ms),
+            SettingItem::Dcd => format!("{}: {}", item.label(), config.dcd_ms),
+            SettingItem::MoveLeft => format!("{}: {}", item.label(), keycode_label(move_left)),
+            SettingItem::MoveRight => format!("{}: {}", item.label(), keycode_label(move_right)),
+            SettingItem::SoftDrop => format!("{}: {}", item.label(), keycode_label(soft_drop)),
+            SettingItem::RotateLeft => format!("{}: {}", item.label(), keycode_label(rotate_left)),
+            SettingItem::RotateRight => format!("{}: {}", item.label(), keycode_label(rotate_right)),
+            SettingItem::Rotate180 => format!("{}: {}", item.label(), keycode_label(rotate_180)),
+            SettingItem::Hold => format!("{}: {}", item.label(), keycode_label(hold)),
+            SettingItem::HardDrop => format!("{}: {}", item.label(), keycode_label(hard_drop)),
+            SettingItem::Back => item.label().to_string(),
+        })
+        .collect()
+}
+
+fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
+    let delta = direction as i64;
+    match item {
+        SettingItem::Das => config.das_ms = clamp_u64(config.das_ms, delta * 5, 0, 1000),
+        SettingItem::Arr => config.arr_ms = clamp_u64(config.arr_ms, delta * 1, 0, 200),
+        SettingItem::Dcd => config.dcd_ms = clamp_u64(config.dcd_ms, delta * 5, 0, 500),
+        _ => {}
+    }
+}
+
+fn apply_binding(config: &mut AppConfig, item: SettingItem, code: KeyCode) {
+    match item {
+        SettingItem::MoveLeft => config.key_bindings.move_left = code,
+        SettingItem::MoveRight => config.key_bindings.move_right = code,
+        SettingItem::SoftDrop => config.key_bindings.soft_drop = code,
+        SettingItem::RotateLeft => config.key_bindings.rotate_left = code,
+        SettingItem::RotateRight => config.key_bindings.rotate_right = code,
+        SettingItem::Rotate180 => config.key_bindings.rotate_180 = code,
+        SettingItem::Hold => config.key_bindings.hold = code,
+        SettingItem::HardDrop => config.key_bindings.hard_drop = code,
+        _ => {}
+    }
+}
+
+fn clamp_u64(value: u64, delta: i64, min: u64, max: u64) -> u64 {
+    let mut v = value as i64 + delta;
+    if v < min as i64 {
+        v = min as i64;
+    }
+    if v > max as i64 {
+        v = max as i64;
+    }
+    v as u64
+}
+
+fn move_selection(selected: &mut usize, len: usize, direction: i32) {
+    if len == 0 {
+        return;
+    }
+    let len_i = len as i32;
+    let mut idx = *selected as i32 + direction;
+    if idx < 0 {
+        idx = len_i - 1;
+    } else if idx >= len_i {
+        idx = 0;
+    }
+    *selected = idx as usize;
+}
+
+fn is_press_or_repeat(kind: KeyEventKind) -> bool {
+    matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat)
+}
+
+fn normalize_keycode(code: KeyCode) -> KeyCode {
+    match code {
+        KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
+        other => other,
+    }
+}
+
+fn keycode_label(code: KeyCode) -> String {
+    match code {
+        KeyCode::Left => "Left Arrow".to_string(),
+        KeyCode::Right => "Right Arrow".to_string(),
+        KeyCode::Up => "Up Arrow".to_string(),
+        KeyCode::Down => "Down Arrow".to_string(),
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "Page Up".to_string(),
+        KeyCode::PageDown => "Page Down".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::F(n) => format!("F{}", n),
+        other => format!("{:?}", other),
     }
 }
 

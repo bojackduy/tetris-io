@@ -5,6 +5,35 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use crate::core::command::Command;
 
 #[derive(Debug, Clone, Copy)]
+pub struct KeyBindings {
+    pub move_left: KeyCode,
+    pub move_right: KeyCode,
+    pub soft_drop: KeyCode,
+    pub rotate_left: KeyCode,
+    pub rotate_right: KeyCode,
+    pub rotate_180: KeyCode,
+    pub hold: KeyCode,
+    pub hard_drop: KeyCode,
+    pub quit: KeyCode,
+}
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self {
+            move_left: KeyCode::Left,
+            move_right: KeyCode::Right,
+            soft_drop: KeyCode::Down,
+            rotate_left: KeyCode::Char('z'),
+            rotate_right: KeyCode::Up,
+            rotate_180: KeyCode::Char('a'),
+            hold: KeyCode::Char('c'),
+            hard_drop: KeyCode::Char(' '),
+            quit: KeyCode::Char('q'),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct InputConfig {
     pub das_ms: u64,
     pub arr_ms: u64,
@@ -61,6 +90,7 @@ impl HeldKey {
 
 pub struct InputState {
     cfg: InputConfig,
+    bindings: KeyBindings,
     left: HeldKey,
     right: HeldKey,
     down: HeldKey,
@@ -70,9 +100,10 @@ pub struct InputState {
 }
 
 impl InputState {
-    pub fn new(cfg: InputConfig) -> Self {
+    pub fn new(cfg: InputConfig, bindings: KeyBindings) -> Self {
         Self {
             cfg,
+            bindings,
             left: HeldKey::default(),
             right: HeldKey::default(),
             down: HeldKey::default(),
@@ -145,103 +176,131 @@ impl InputState {
 
     fn handle_key(&mut self, key: KeyEvent, now: Instant, out: &mut Vec<Command>) {
         if matches!(key.kind, KeyEventKind::Repeat | KeyEventKind::Release)
-            && matches!(key.code, KeyCode::Left | KeyCode::Right | KeyCode::Down)
+            && (matches_keycode(key.code, self.bindings.move_left)
+                || matches_keycode(key.code, self.bindings.move_right)
+                || matches_keycode(key.code, self.bindings.soft_drop))
         {
             self.enhanced_input = true;
         }
 
         if !self.enhanced_input {
-            match (key.code, key.kind) {
-                (KeyCode::Left, KeyEventKind::Press) => {
-                    out.push(Command::MoveLeft);
-                    return;
-                }
-                (KeyCode::Right, KeyEventKind::Press) => {
-                    out.push(Command::MoveRight);
-                    return;
-                }
-                (KeyCode::Down, KeyEventKind::Press) => {
-                    out.push(Command::SoftDrop);
-                    return;
-                }
-                _ => {}
+            if matches_keycode(key.code, self.bindings.move_left) && matches!(key.kind, KeyEventKind::Press)
+            {
+                out.push(Command::MoveLeft);
+                return;
+            }
+            if matches_keycode(key.code, self.bindings.move_right) && matches!(key.kind, KeyEventKind::Press)
+            {
+                out.push(Command::MoveRight);
+                return;
+            }
+            if matches_keycode(key.code, self.bindings.soft_drop) && matches!(key.kind, KeyEventKind::Press) {
+                out.push(Command::SoftDrop);
+                return;
             }
         }
 
         if self.lockout_active(now) {
-            match (key.code, key.kind) {
-                (KeyCode::Left, KeyEventKind::Release) => self.left.release(),
-                (KeyCode::Right, KeyEventKind::Release) => self.right.release(),
-                (KeyCode::Down, KeyEventKind::Release) => self.down.release(),
-                _ => {}
+            if matches_keycode(key.code, self.bindings.move_left) && matches!(key.kind, KeyEventKind::Release)
+            {
+                self.left.release();
+            } else if matches_keycode(key.code, self.bindings.move_right)
+                && matches!(key.kind, KeyEventKind::Release)
+            {
+                self.right.release();
+            } else if matches_keycode(key.code, self.bindings.soft_drop)
+                && matches!(key.kind, KeyEventKind::Release)
+            {
+                self.down.release();
             }
             return;
         }
-        match (key.code, key.kind) {
-            (KeyCode::Left, KeyEventKind::Press) => {
-                self.right.release();
-                let use_dcd = matches!(self.last_dir, Some(Dir::Right));
-                let was_down = self.left.is_down;
-                self.left
-                    .press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
-                if !was_down {
-                    out.push(Command::MoveLeft);
+        if matches_keycode(key.code, self.bindings.move_left) {
+            match key.kind {
+                KeyEventKind::Press => {
+                    self.right.release();
+                    let use_dcd = matches!(self.last_dir, Some(Dir::Right));
+                    let was_down = self.left.is_down;
+                    self.left
+                        .press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
+                    if !was_down {
+                        out.push(Command::MoveLeft);
+                    }
+                    self.last_dir = Some(Dir::Left);
                 }
-                self.last_dir = Some(Dir::Left);
-            }
-            (KeyCode::Right, KeyEventKind::Press) => {
-                self.left.release();
-                let use_dcd = matches!(self.last_dir, Some(Dir::Left));
-                let was_down = self.right.is_down;
-                self.right
-                    .press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
-                if !was_down {
-                    out.push(Command::MoveRight);
+                KeyEventKind::Release => {
+                    self.left.release();
+                    if !self.right.is_down {
+                        self.last_dir = None;
+                    }
                 }
-                self.last_dir = Some(Dir::Right);
-            }
-            (KeyCode::Down, KeyEventKind::Press) => {
-                let was_down = self.down.is_down;
-                self.down.press(now);
-                if !was_down {
-                    out.push(Command::SoftDrop);
+                KeyEventKind::Repeat => {
+                    self.right.release();
+                    self.left.press(now);
                 }
             }
-            (KeyCode::Left, KeyEventKind::Release) => {
-                self.left.release();
-                if !self.right.is_down {
-                    self.last_dir = None;
+            return;
+        }
+        if matches_keycode(key.code, self.bindings.move_right) {
+            match key.kind {
+                KeyEventKind::Press => {
+                    self.left.release();
+                    let use_dcd = matches!(self.last_dir, Some(Dir::Left));
+                    let was_down = self.right.is_down;
+                    self.right
+                        .press_with_dcd(now, self.cfg.das_ms, self.cfg.dcd_ms, use_dcd);
+                    if !was_down {
+                        out.push(Command::MoveRight);
+                    }
+                    self.last_dir = Some(Dir::Right);
+                }
+                KeyEventKind::Release => {
+                    self.right.release();
+                    if !self.left.is_down {
+                        self.last_dir = None;
+                    }
+                }
+                KeyEventKind::Repeat => {
+                    self.left.release();
+                    self.right.press(now);
                 }
             }
-            (KeyCode::Right, KeyEventKind::Release) => {
-                self.right.release();
-                if !self.left.is_down {
-                    self.last_dir = None;
+            return;
+        }
+        if matches_keycode(key.code, self.bindings.soft_drop) {
+            match key.kind {
+                KeyEventKind::Press => {
+                    let was_down = self.down.is_down;
+                    self.down.press(now);
+                    if !was_down {
+                        out.push(Command::SoftDrop);
+                    }
                 }
+                KeyEventKind::Release => self.down.release(),
+                KeyEventKind::Repeat => self.down.press(now),
             }
-            (KeyCode::Down, KeyEventKind::Release) => self.down.release(),
-            (KeyCode::Left, KeyEventKind::Repeat) => {
-                self.right.release();
-                self.left.press(now);
+            return;
+        }
+
+        match (key.kind, key.code) {
+            (KeyEventKind::Press, code) if matches_keycode(code, self.bindings.rotate_left) => {
+                out.push(Command::RotateLeft)
             }
-            (KeyCode::Right, KeyEventKind::Repeat) => {
-                self.left.release();
-                self.right.press(now);
+            (KeyEventKind::Press, code) if matches_keycode(code, self.bindings.rotate_right) => {
+                out.push(Command::RotateRight)
             }
-            (KeyCode::Down, KeyEventKind::Repeat) => {
-                self.down.press(now);
+            (KeyEventKind::Press, code) if matches_keycode(code, self.bindings.rotate_180) => {
+                out.push(Command::Rotate180)
             }
-            (KeyCode::Char('z'), KeyEventKind::Press)
-            | (KeyCode::Char('Z'), KeyEventKind::Press) => out.push(Command::RotateLeft),
-            (KeyCode::Up, KeyEventKind::Press) => out.push(Command::RotateRight),
-            (KeyCode::Char('a'), KeyEventKind::Press)
-            | (KeyCode::Char('A'), KeyEventKind::Press) => out.push(Command::Rotate180),
-            (KeyCode::Char('c'), KeyEventKind::Press)
-            | (KeyCode::Char('C'), KeyEventKind::Press) => out.push(Command::Hold),
-            (KeyCode::Char('q'), KeyEventKind::Press)
-            | (KeyCode::Char('Q'), KeyEventKind::Press)
-            | (KeyCode::Esc, KeyEventKind::Press) => out.push(Command::Quit),
-            (KeyCode::Char(' '), KeyEventKind::Press) => out.push(Command::HardDrop),
+            (KeyEventKind::Press, code) if matches_keycode(code, self.bindings.hold) => {
+                out.push(Command::Hold)
+            }
+            (KeyEventKind::Press, code) if matches_keycode(code, self.bindings.hard_drop) => {
+                out.push(Command::HardDrop)
+            }
+            (KeyEventKind::Press, code) if is_quit_key(code, self.bindings.quit) => {
+                out.push(Command::Quit)
+            }
             _ => {}
         }
     }
@@ -306,4 +365,15 @@ fn auto_release_if_idle(key: &mut HeldKey, now: Instant, timeout_ms: u64) {
 enum Dir {
     Left,
     Right,
+}
+
+fn matches_keycode(actual: KeyCode, expected: KeyCode) -> bool {
+    match (actual, expected) {
+        (KeyCode::Char(a), KeyCode::Char(b)) => a.to_ascii_lowercase() == b.to_ascii_lowercase(),
+        _ => actual == expected,
+    }
+}
+
+fn is_quit_key(actual: KeyCode, expected: KeyCode) -> bool {
+    matches_keycode(actual, expected) || matches!(actual, KeyCode::Esc)
 }

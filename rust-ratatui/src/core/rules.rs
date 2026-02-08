@@ -1,13 +1,21 @@
 use crate::core::board::{Board, BOARD_HEIGHT, BOARD_WIDTH};
 use crate::core::command::Command;
 use crate::core::events::Event;
-use crate::core::piece::{Piece, Rotation};
+use crate::core::piece::{Piece, PieceType, Rotation};
 use crate::core::state::GameState;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RulesConfig {
     pub gravity_ms: u64,
     pub soft_drop_factor: u32,
+    pub lock_delay_ms: u64,
+    pub lock_reset_limit: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RotationDir {
+    Cw,
+    Ccw,
 }
 
 pub fn step(
@@ -22,32 +30,46 @@ pub fn step(
         return events;
     }
 
+    let mut moved_or_rotated = false;
     let mut soft_drop_pressed = false;
+    let mut locked_this_frame = false;
+
     for cmd in commands {
         match cmd {
             Command::MoveLeft => {
-                try_move(state, -1, 0);
+                if try_shift(state, -1, 0) {
+                    moved_or_rotated = true;
+                }
             }
             Command::MoveRight => {
-                try_move(state, 1, 0);
+                if try_shift(state, 1, 0) {
+                    moved_or_rotated = true;
+                }
             }
             Command::SoftDrop => {
                 soft_drop_pressed = true;
-                if !try_move(state, 0, 1) {
-                    lock_piece(state, &mut events);
+                if try_shift(state, 0, 1) {
+                    moved_or_rotated = true;
                 }
             }
             Command::HardDrop => {
                 hard_drop(state, &mut events);
+                locked_this_frame = true;
             }
             Command::RotateLeft => {
-                try_rotate(state, state.active.rotation.ccw());
+                if try_rotate(state, RotationDir::Ccw) {
+                    moved_or_rotated = true;
+                }
             }
             Command::RotateRight => {
-                try_rotate(state, state.active.rotation.cw());
+                if try_rotate(state, RotationDir::Cw) {
+                    moved_or_rotated = true;
+                }
             }
             Command::Rotate180 => {
-                try_rotate(state, state.active.rotation.half());
+                if try_rotate_180(state) {
+                    moved_or_rotated = true;
+                }
             }
             Command::Hold => {
                 hold_piece(state, &mut events);
@@ -57,6 +79,13 @@ pub fn step(
                 events.push(Event::GameOver);
             }
         }
+        if locked_this_frame || state.game_over {
+            break;
+        }
+    }
+
+    if locked_this_frame || state.game_over {
+        return events;
     }
 
     let effective_gravity = if soft_drop_active || soft_drop_pressed {
@@ -69,10 +98,34 @@ pub fn step(
     state.gravity_accum_ms = state.gravity_accum_ms.saturating_add(dt_ms);
     while state.gravity_accum_ms >= effective_gravity {
         state.gravity_accum_ms -= effective_gravity;
-        if !try_move(state, 0, 1) {
-            lock_piece(state, &mut events);
+        if try_shift(state, 0, 1) {
+            moved_or_rotated = true;
+        } else {
             break;
         }
+    }
+
+    let was_grounded = state.grounded;
+    let grounded_now = !can_place(&state.board, offset_piece(state.active, 0, 1));
+
+    if !grounded_now {
+        state.grounded = false;
+        state.lock_delay_ms = 0;
+        state.lock_reset_count = 0;
+        return events;
+    }
+
+    if !was_grounded {
+        state.lock_delay_ms = 0;
+    } else if moved_or_rotated && state.lock_reset_count < cfg.lock_reset_limit {
+        state.lock_delay_ms = 0;
+        state.lock_reset_count = state.lock_reset_count.saturating_add(1);
+    }
+
+    state.grounded = true;
+    state.lock_delay_ms = state.lock_delay_ms.saturating_add(dt_ms);
+    if state.lock_delay_ms >= cfg.lock_delay_ms {
+        lock_piece(state, &mut events);
     }
 
     events
@@ -107,7 +160,7 @@ fn hold_piece(state: &mut GameState, events: &mut Vec<Event>) {
 }
 
 fn hard_drop(state: &mut GameState, events: &mut Vec<Event>) {
-    while try_move(state, 0, 1) {}
+    while try_shift(state, 0, 1) {}
     lock_piece(state, events);
 }
 
@@ -132,7 +185,7 @@ fn lock_piece(state: &mut GameState, events: &mut Vec<Event>) {
     }
 }
 
-fn try_move(state: &mut GameState, dx: i32, dy: i32) -> bool {
+fn try_shift(state: &mut GameState, dx: i32, dy: i32) -> bool {
     let candidate = offset_piece(state.active, dx, dy);
     if can_place(&state.board, candidate) {
         state.active = candidate;
@@ -142,16 +195,126 @@ fn try_move(state: &mut GameState, dx: i32, dy: i32) -> bool {
     }
 }
 
-fn try_rotate(state: &mut GameState, rotation: Rotation) -> bool {
-    let mut candidate = state.active;
-    candidate.rotation = rotation;
-    if can_place(&state.board, candidate) {
-        state.active = candidate;
+fn try_rotate(state: &mut GameState, dir: RotationDir) -> bool {
+    if let Some(piece) = rotate_with_kicks(&state.board, state.active, dir) {
+        state.active = piece;
         true
     } else {
         false
     }
 }
+
+fn try_rotate_180(state: &mut GameState) -> bool {
+    let original = state.active;
+    if let Some(first) = rotate_with_kicks(&state.board, original, RotationDir::Cw) {
+        if let Some(second) = rotate_with_kicks(&state.board, first, RotationDir::Cw) {
+            state.active = second;
+            return true;
+        }
+    }
+    if let Some(first) = rotate_with_kicks(&state.board, original, RotationDir::Ccw) {
+        if let Some(second) = rotate_with_kicks(&state.board, first, RotationDir::Ccw) {
+            state.active = second;
+            return true;
+        }
+    }
+    false
+}
+
+fn rotate_with_kicks(board: &Board, piece: Piece, dir: RotationDir) -> Option<Piece> {
+    let target = match dir {
+        RotationDir::Cw => piece.rotation.cw(),
+        RotationDir::Ccw => piece.rotation.ccw(),
+    };
+
+    if piece.kind == PieceType::O {
+        let candidate = Piece { rotation: target, ..piece };
+        return if can_place(board, candidate) {
+            Some(candidate)
+        } else {
+            None
+        };
+    }
+
+    let kicks = match piece.kind {
+        PieceType::I => i_kicks(dir, piece.rotation),
+        _ => jlstz_kicks(dir, piece.rotation),
+    };
+
+    for (dx, dy) in kicks {
+        let candidate = Piece {
+            rotation: target,
+            x: piece.x + dx,
+            y: piece.y + dy,
+            ..piece
+        };
+        if can_place(board, candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn jlstz_kicks(dir: RotationDir, from: Rotation) -> &'static [(i32, i32); 5] {
+    let idx = from.0 as usize;
+    match dir {
+        RotationDir::Cw => &JLSTZ_KICKS_CW[idx],
+        RotationDir::Ccw => &JLSTZ_KICKS_CCW[idx],
+    }
+}
+
+fn i_kicks(dir: RotationDir, from: Rotation) -> &'static [(i32, i32); 5] {
+    let idx = from.0 as usize;
+    match dir {
+        RotationDir::Ccw => &I_KICKS_CCW[idx],
+        RotationDir::Cw => &I_KICKS_CW[idx],
+    }
+}
+
+const JLSTZ_KICKS_CW: [[(i32, i32); 5]; 4] = [
+    // 0 -> R
+    [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+    // R -> 2
+    [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+    // 2 -> L
+    [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+    // L -> 0
+    [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+];
+
+const JLSTZ_KICKS_CCW: [[(i32, i32); 5]; 4] = [
+    // 0 -> L
+    [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+    // R -> 0
+    [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+    // 2 -> R
+    [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+    // L -> 2
+    [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+];
+
+const I_KICKS_CCW: [[(i32, i32); 5]; 4] = [
+    // 0 -> L
+    [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+    // R -> 0
+    [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+    // 2 -> R
+    [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+    // L -> 2
+    [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+];
+
+// SRS+ for I: CW kicks are mirrored from CCW for symmetry.
+const I_KICKS_CW: [[(i32, i32); 5]; 4] = [
+    // 0 -> R (mirror of 0 -> L)
+    [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
+    // R -> 2 (mirror of R -> 0)
+    [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],
+    // 2 -> L (mirror of 2 -> R)
+    [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
+    // L -> 0 (mirror of L -> 2)
+    [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+];
 
 fn offset_piece(piece: Piece, dx: i32, dy: i32) -> Piece {
     Piece {

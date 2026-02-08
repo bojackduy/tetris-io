@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -13,11 +13,12 @@ use crate::core::{
     state::GameState,
 };
 
+#[derive(Debug, Clone, Copy)]
 pub struct RenderContext {
     pub elapsed_secs: u64,
 }
 
-pub fn render(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
+pub fn render_game(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
     let area = frame.size();
     let board_height = VISIBLE_HEIGHT as u16 + 2;
     let board_width = BOARD_WIDTH as u16 * 2 + 2;
@@ -59,6 +60,59 @@ pub fn render(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
     render_left(frame, left, state, ctx);
     render_board(frame, board_area, state);
     render_next(frame, right, state);
+}
+
+pub fn render_menu(frame: &mut Frame, title: &str, items: &[String], selected: usize, footer: &str) {
+    render_list_screen(frame, title, items, selected, footer, 40);
+}
+
+pub fn render_settings(
+    frame: &mut Frame,
+    title: &str,
+    items: &[String],
+    selected: usize,
+    footer: &str,
+) {
+    render_list_screen(frame, title, items, selected, footer, 56);
+}
+
+pub fn render_game_over(
+    frame: &mut Frame,
+    state: &GameState,
+    ctx: RenderContext,
+    selected: usize,
+) {
+    render_game(frame, state, ctx);
+
+    let area = frame.size();
+    let width = area.width.min(42).max(24);
+    let height = area.height.min(12).max(8);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default().title("GAME OVER").borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let summary_lines = vec![
+        Line::from(format!("Score {:06}", state.score)),
+        Line::from(format!("Lines {:02}", state.lines)),
+        Line::from(format!(
+            "Time {:02}:{:02}",
+            ctx.elapsed_secs / 60,
+            ctx.elapsed_secs % 60
+        )),
+    ];
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(inner);
+
+    frame.render_widget(Paragraph::new(summary_lines), chunks[0]);
+
+    let items = ["Retry", "Menu", "Quit"];
+    render_list(frame, &items, selected, chunks[1]);
 }
 
 fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
@@ -245,4 +299,63 @@ fn piece_color(kind: PieceType) -> Color {
         PieceType::J => Color::Blue,
         PieceType::L => Color::LightYellow,
     }
+}
+
+fn render_list_screen(
+    frame: &mut Frame,
+    title: &str,
+    items: &[String],
+    selected: usize,
+    footer: &str,
+    width_hint: u16,
+) {
+    let area = frame.size();
+    let width = width_hint.min(area.width.saturating_sub(2)).max(20);
+    let height = (items.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let footer_lines: Vec<Line> = if footer.is_empty() {
+        Vec::new()
+    } else {
+        footer.lines().map(Line::from).collect()
+    };
+    let footer_height = footer_lines.len() as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(footer_height)])
+        .split(inner);
+
+    render_list(frame, items, selected, chunks[0]);
+
+    if footer_height > 0 {
+        frame.render_widget(Paragraph::new(footer_lines), chunks[1]);
+    }
+}
+
+fn render_list<T: ToString>(frame: &mut Frame, items: &[T], selected: usize, area: Rect) {
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        state.select(Some(selected.min(items.len() - 1)));
+    }
+    let list_items: Vec<ListItem> = items
+        .iter()
+        .map(|item| ListItem::new(item.to_string()))
+        .collect();
+    let list = List::new(list_items)
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▸ ");
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let x = area.x.saturating_add((area.width.saturating_sub(width)) / 2);
+    let y = area.y.saturating_add((area.height.saturating_sub(height)) / 2);
+    Rect { x, y, width, height }
 }

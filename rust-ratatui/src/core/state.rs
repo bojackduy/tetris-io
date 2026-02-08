@@ -17,6 +17,9 @@ pub struct GameState {
     pub rng: BagRng,
     pub game_over: bool,
     pub gravity_accum_ms: u64,
+    pub lock_delay_ms: u64,
+    pub lock_reset_count: u32,
+    pub grounded: bool,
     pub lines: u32,
     pub score: u32,
     pub level: u32,
@@ -39,6 +42,9 @@ impl GameState {
             rng,
             game_over: false,
             gravity_accum_ms: 0,
+            lock_delay_ms: 0,
+            lock_reset_count: 0,
+            grounded: false,
             lines: 0,
             score: 0,
             level: 1,
@@ -52,6 +58,10 @@ impl GameState {
             x: SPAWN_X,
             y: SPAWN_Y,
         };
+        self.gravity_accum_ms = 0;
+        self.lock_delay_ms = 0;
+        self.lock_reset_count = 0;
+        self.grounded = false;
     }
 
     pub fn pop_next(&mut self) -> PieceType {

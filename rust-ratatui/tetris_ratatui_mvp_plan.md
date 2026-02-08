@@ -124,3 +124,11 @@ Key design choices:
 
 ## Soft Drop (MVP)
 - Soft drop speed: `6x` current gravity
+
+## MVP Mechanics (Modern Tetris Feel)
+- Lock delay: default `500ms`. Timer starts when a piece first touches the ground.
+- Move reset: any successful move or rotation while grounded resets the lock timer (up to a cap).
+- Reset cap (conservative): `10` resets max before the timer no longer resets.
+- Hard drop: locks immediately.
+- Rotation system: SRS wall kicks for 90-degree rotations (JLSTZ standard SRS; I uses SRS+ symmetry: CW kicks mirror CCW).
+- 180 rotation: MVP uses **double 90° rotations with kicks** (CW+CW, else CCW+CCW). Replace with exact TETR.IO 180 table later if needed.
