@@ -123,6 +123,14 @@ pub fn step(
             lock_piece(state, &mut events);
         }
     } else {
+        if was_grounded
+            && state.lock_started
+            && state.lock_reset_count < cfg.lock_reset_limit
+        {
+            // Leaving the ground grants a limited reset to make tricky placements feel fair.
+            state.lock_delay_ms = 0;
+            state.lock_reset_count = state.lock_reset_count.saturating_add(1);
+        }
         state.grounded = false;
     }
 

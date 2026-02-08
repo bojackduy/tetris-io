@@ -22,7 +22,7 @@ impl Default for AppConfig {
             arr_ms: 16,
             dcd_ms: 33,
             soft_drop_factor: 6,
-            lock_delay_ms: 500,
+            lock_delay_ms: 700,
             lock_reset_limit: 10,
             key_bindings: KeyBindings::default(),
         }
