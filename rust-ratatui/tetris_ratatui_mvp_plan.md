@@ -83,7 +83,7 @@ Key design choices:
 
 ## Current Goal (MVP)
 - Single-player Tetris with:
-  - movement, rotation (naive), soft drop, hard drop
+  - movement, rotation (SRS+ kicks), soft drop, hard drop
   - gravity tick and lock
   - line clears
   - deterministic 7-bag queue
@@ -126,9 +126,15 @@ Key design choices:
 - Soft drop speed: `6x` current gravity
 
 ## MVP Mechanics (Modern Tetris Feel)
-- Lock delay: default `500ms`. Timer starts when a piece first touches the ground.
+- Lock delay: default `700ms`. Timer starts when a piece first touches the ground.
 - Move reset: any successful move or rotation while grounded resets the lock timer (up to a cap).
+- Leave-ground reset: if a grounded piece lifts off, lock timer resets (counts against cap).
 - Reset cap (conservative): `10` resets max before the timer no longer resets.
 - Hard drop: locks immediately.
 - Rotation system: SRS wall kicks for 90-degree rotations (JLSTZ standard SRS; I uses SRS+ symmetry: CW kicks mirror CCW).
-- 180 rotation: MVP uses **double 90° rotations with kicks** (CW+CW, else CCW+CCW). Replace with exact TETR.IO 180 table later if needed.
+- 180 rotation: MVP uses a dedicated 180-kick table (TETR.IO-style, 6 tests). Replace with exact TETR.IO table if ours differs.
+
+## MVP Gaps / Follow-ups (Rotation Focus)
+- Verify piece spawn orientations + rotation centers match SRS assumptions (current shapes are 4x4, but need confirm pivot alignment).
+- Add rotation regression tests for SRS kick cases (wall kick, floor kick, TST/DT scenarios).
+- Confirm 180-kick table ordering/offsets against authoritative TETR.IO reference.

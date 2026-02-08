@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn collision_detected() {
         let mut state = GameState::new(1);
-        state.board.set(0, 0, Some(PieceType::I));
+        state.board.set(1, 0, Some(PieceType::I));
         let piece = Piece {
             kind: PieceType::O,
             rotation: Rotation(0),
@@ -420,5 +420,52 @@ mod tests {
             y: 0,
         };
         assert!(!can_place(&state.board, piece));
+    }
+
+    #[test]
+    fn jlstz_wall_kick_from_right_wall() {
+        let board = Board::new();
+        let piece = Piece {
+            kind: PieceType::T,
+            rotation: Rotation(3), // L
+            x: 8,
+            y: 0,
+        };
+
+        let rotated = rotate_with_kicks(&board, piece, RotationDir::Cw).expect("kick should fit");
+        assert_eq!(rotated.rotation.0, 0);
+        assert_eq!(rotated.x, 7);
+        assert_eq!(rotated.y, 0);
+    }
+
+    #[test]
+    fn i_wall_kick_from_right_wall() {
+        let board = Board::new();
+        let piece = Piece {
+            kind: PieceType::I,
+            rotation: Rotation(1), // R (vertical)
+            x: 7,
+            y: 0,
+        };
+
+        let rotated = rotate_with_kicks(&board, piece, RotationDir::Cw).expect("kick should fit");
+        assert_eq!(rotated.rotation.0, 2);
+        assert_eq!(rotated.x, 5);
+    }
+
+    #[test]
+    fn kick_180_uses_offset() {
+        let board = Board::new();
+        let piece = Piece {
+            kind: PieceType::T,
+            rotation: Rotation(3), // L
+            x: 8,
+            y: 0,
+        };
+
+        let rotated = rotate_180_with_kicks(&board, piece).expect("180 kick should fit");
+        assert_eq!(rotated.rotation.0, 1);
+        assert_eq!(rotated.x, 7);
+        assert_eq!(rotated.y, 1);
     }
 }
