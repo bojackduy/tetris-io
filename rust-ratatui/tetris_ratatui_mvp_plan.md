@@ -89,7 +89,7 @@ Key design choices:
   - deterministic 7-bag queue
   - ghost piece (landing projection)
   - render in terminal using ratatui
-  - mode: Endless + Blitz 2:00
+  - mode: Endless + Blitz 2:00 + 40 Lines
 
 ## Future Goal (Advanced Competitive Systems)
 - SRS rotation + wall kicks

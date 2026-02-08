@@ -22,7 +22,7 @@ use crate::ui::render::{
     render_game, render_game_over, render_menu, render_pause, render_settings, RenderContext,
 };
 
-const MENU_ITEMS: [&str; 4] = ["New Game", "Blitz 2:00", "Settings", "Quit"];
+const MENU_ITEMS: [&str; 5] = ["New Game", "Blitz 2:00", "40 Lines", "Settings", "Quit"];
 const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
 const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
 const SETTINGS_ITEMS: [SettingItem; 12] = [
@@ -53,6 +53,7 @@ enum Screen {
 enum GameMode {
     Endless,
     Blitz { duration_secs: u64 },
+    FortyLines { target: u32 },
 }
 
 impl GameMode {
@@ -60,6 +61,7 @@ impl GameMode {
         match self {
             GameMode::Endless => None,
             GameMode::Blitz { duration_secs } => Some(duration_secs),
+            GameMode::FortyLines { .. } => None,
         }
     }
 }
@@ -272,6 +274,13 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Playing;
                                 }
                                 2 => {
+                                    *session = GameSession::new(
+                                        config,
+                                        GameMode::FortyLines { target: 40 },
+                                    );
+                                    *screen = Screen::Playing;
+                                }
+                                3 => {
                                     *screen = Screen::Settings {
                                         selected: 0,
                                         capture: None,
@@ -401,6 +410,17 @@ pub fn run() -> io::Result<()> {
                 }
             }
 
+            if let GameMode::FortyLines { target } = app.session.mode {
+                if app.session.state.lines >= target {
+                    app.session.game_over_time = Some(app.session.elapsed_secs(now));
+                    app.session.time_up = true;
+                    app.session.state.game_over = true;
+                    app.session.input.clear_motion();
+                    app.screen = Screen::GameOver { selected: 0 };
+                    continue;
+                }
+            }
+
             let mut dt = now.duration_since(app.session.last_frame);
             app.session.last_frame = now;
             dt = Duration::from_millis(clamp_dt_ms(dt.as_millis() as u64, 50));
@@ -451,6 +471,7 @@ pub fn run() -> io::Result<()> {
                 let (time_secs, time_label) = match app.session.mode {
                     GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
                     GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
+                    GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
                 };
                 render_game(
                     f,
@@ -465,8 +486,18 @@ pub fn run() -> io::Result<()> {
                 let time_secs = match app.session.mode {
                     GameMode::Endless => app.session.elapsed_secs(now),
                     GameMode::Blitz { duration_secs } => duration_secs,
+                    GameMode::FortyLines { .. } => app.session.elapsed_secs(now),
                 };
-                let title = if app.session.time_up { "TIME UP" } else { "GAME OVER" };
+                let title = match app.session.mode {
+                    GameMode::FortyLines { .. } => "40 LINES",
+                    _ => {
+                        if app.session.time_up {
+                            "TIME UP"
+                        } else {
+                            "GAME OVER"
+                        }
+                    }
+                };
                 render_game_over(
                     f,
                     &app.session.state,
@@ -482,6 +513,7 @@ pub fn run() -> io::Result<()> {
                 let (time_secs, time_label) = match app.session.mode {
                     GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
                     GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
+                    GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
                 };
                 render_pause(
                     f,
