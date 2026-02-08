@@ -115,6 +115,20 @@ pub fn render_game_over(
     render_list(frame, &items, selected, chunks[1]);
 }
 
+fn combo_lines(state: &GameState) -> Vec<Line<'static>> {
+    if state.clear_display_ms == 0 {
+        return vec![Line::from("(empty)")];
+    }
+    let label = match &state.last_clear_label {
+        Some(label) if !label.is_empty() => label,
+        _ => return vec![Line::from("(empty)")],
+    };
+    label
+        .split(" | ")
+        .map(|part| Line::from(part.to_string()))
+        .collect()
+}
+
 pub fn render_pause(
     frame: &mut Frame,
     state: &GameState,
@@ -156,7 +170,8 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
     let hold = Paragraph::new(hold_lines).block(Block::default().title("HOLD").borders(Borders::ALL));
     frame.render_widget(hold, chunks[0]);
 
-    let combo = Paragraph::new(vec![Line::from("(empty)")])
+    let combo_lines = combo_lines(state);
+    let combo = Paragraph::new(combo_lines)
         .block(Block::default().title("COMBO").borders(Borders::ALL));
     frame.render_widget(combo, chunks[1]);
 

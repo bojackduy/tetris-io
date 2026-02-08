@@ -21,6 +21,11 @@ pub struct GameState {
     pub lock_reset_count: u32,
     pub grounded: bool,
     pub lock_started: bool,
+    pub combo: u32,
+    pub b2b: u32,
+    pub last_clear_label: Option<String>,
+    pub clear_display_ms: u64,
+    pub last_action_rotation: bool,
     pub lines: u32,
     pub score: u32,
     pub level: u32,
@@ -47,6 +52,11 @@ impl GameState {
             lock_reset_count: 0,
             grounded: false,
             lock_started: false,
+            combo: 0,
+            b2b: 0,
+            last_clear_label: None,
+            clear_display_ms: 0,
+            last_action_rotation: false,
             lines: 0,
             score: 0,
             level: 1,
@@ -65,6 +75,7 @@ impl GameState {
         self.lock_reset_count = 0;
         self.grounded = false;
         self.lock_started = false;
+        self.last_action_rotation = false;
     }
 
     pub fn pop_next(&mut self) -> PieceType {

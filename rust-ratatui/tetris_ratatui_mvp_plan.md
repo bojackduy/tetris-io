@@ -138,3 +138,34 @@ Key design choices:
 - Verify piece spawn orientations + rotation centers match SRS assumptions (current shapes are 4x4, but need confirm pivot alignment).
 - Add rotation regression tests for SRS kick cases (wall kick, floor kick, TST/DT scenarios).
 - Confirm 180-kick table ordering/offsets against authoritative TETR.IO reference.
+
+## Combo / Scoring Display (MVP Plan)
+- Goal: show recent line-clear + spin labels and combo count in the left COMBO panel **and** apply the same combo to score.
+- Rule: we only display a combo if it affects score (no “cosmetic-only” combos).
+- Label set:
+  - Line clears: `Single`, `Double`, `Triple`, `Quad`.
+  - T-Spins: `T-Spin`, `T-Spin Single/Double/Triple`, `Mini T-Spin`, `Mini T-Spin Single/Double`.
+  - All-Mini: non-T spins display as `Mini Spin`, `Mini Spin Single/Double/Triple`.
+  - B2B prefix (if applicable): `B2B` or `B2B xN`.
+  - Combo suffix: `Combo xN` (increment on consecutive line clears).
+  - Perfect Clear: `Perfect Clear` (board empty after clear).
+- Detection plan:
+  - Track whether the last successful action before lock was a rotation.
+  - T-Spin recognition: if piece is T, last action was rotation, and 3 of 4 corners around the T center are occupied, count as T-Spin.
+  - Mini vs full: use the standard corner test (front-corner rule); treat as Mini if only one front corner is occupied.
+  - All-Mini: for non-T pieces, if last action was rotation and the piece is immobile (cannot move up/left/right), count as Mini Spin.
+  - B2B: maintain chain for difficult clears (Tetris or any T-Spin with lines).
+  - Combo: increment on any line clear; reset on no clear.
+- UI plan:
+  - Store `last_clear_label` + `last_clear_time` in state; render for ~2 seconds in the COMBO panel.
+  - If multiple tags apply, format as `T-Spin Double | B2B | Combo x3`.
+
+## Scoring (TETR.IO-Style, MVP)
+- Base points (level multiplier optional; default level=1):
+  - Single 100, Double 300, Triple 500, Quad 800
+  - Spin Zero 400, Spin Single 800, Spin Double 1200, Spin Triple 1600, Spin Quad 2600
+  - Mini Spin Zero 100, Mini Spin Single 200, Mini Spin Double 400, Mini Spin Triple 800, Mini Spin Quad 1600
+  - Perfect Clear 3500
+- B2B: multiply difficult clears by 1.5x (T-Spin with lines or Quad).
+- Combo bonus: add `50 * combo` per line clear (combo starts at 1).
+- Drop points: soft drop +1 per cell, hard drop +2 per cell.

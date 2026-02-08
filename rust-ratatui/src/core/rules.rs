@@ -18,6 +18,13 @@ enum RotationDir {
     Ccw,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpinKind {
+    TSpin,
+    Mini,
+    AllMini,
+}
+
 pub fn step(
     state: &mut GameState,
     cfg: RulesConfig,
@@ -26,6 +33,12 @@ pub fn step(
     soft_drop_active: bool,
 ) -> Vec<Event> {
     let mut events = Vec::new();
+    if state.clear_display_ms > 0 {
+        state.clear_display_ms = state.clear_display_ms.saturating_sub(dt_ms);
+        if state.clear_display_ms == 0 {
+            state.last_clear_label = None;
+        }
+    }
     if state.game_over {
         return events;
     }
@@ -39,17 +52,21 @@ pub fn step(
             Command::MoveLeft => {
                 if try_shift(state, -1, 0) {
                     moved_or_rotated = true;
+                    state.last_action_rotation = false;
                 }
             }
             Command::MoveRight => {
                 if try_shift(state, 1, 0) {
                     moved_or_rotated = true;
+                    state.last_action_rotation = false;
                 }
             }
             Command::SoftDrop => {
                 soft_drop_pressed = true;
                 if try_shift(state, 0, 1) {
                     moved_or_rotated = true;
+                    state.last_action_rotation = false;
+                    state.score = state.score.saturating_add(1);
                 }
             }
             Command::HardDrop => {
@@ -59,20 +76,24 @@ pub fn step(
             Command::RotateLeft => {
                 if try_rotate(state, RotationDir::Ccw) {
                     moved_or_rotated = true;
+                    state.last_action_rotation = true;
                 }
             }
             Command::RotateRight => {
                 if try_rotate(state, RotationDir::Cw) {
                     moved_or_rotated = true;
+                    state.last_action_rotation = true;
                 }
             }
             Command::Rotate180 => {
                 if try_rotate_180(state) {
                     moved_or_rotated = true;
+                    state.last_action_rotation = true;
                 }
             }
             Command::Hold => {
                 hold_piece(state, &mut events);
+                state.last_action_rotation = false;
             }
             Command::Quit => {
                 state.game_over = true;
@@ -100,6 +121,7 @@ pub fn step(
         state.gravity_accum_ms -= effective_gravity;
         if try_shift(state, 0, 1) {
             moved_or_rotated = true;
+            state.last_action_rotation = false;
         } else {
             break;
         }
@@ -166,20 +188,28 @@ fn hold_piece(state: &mut GameState, events: &mut Vec<Event>) {
 }
 
 fn hard_drop(state: &mut GameState, events: &mut Vec<Event>) {
-    while try_shift(state, 0, 1) {}
+    let mut distance = 0u32;
+    while try_shift(state, 0, 1) {
+        distance = distance.saturating_add(1);
+    }
+    if distance > 0 {
+        state.score = state.score.saturating_add(distance.saturating_mul(2));
+    }
     lock_piece(state, events);
 }
 
 fn lock_piece(state: &mut GameState, events: &mut Vec<Event>) {
+    let spin = detect_spin(state);
     for (x, y) in state.active.blocks() {
         state.board.set(x, y, Some(state.active.kind));
     }
     events.push(Event::Locked);
     let cleared = state.board.clear_full_rows();
     if cleared > 0 {
-        state.lines = state.lines.saturating_add(cleared as u32);
         events.push(Event::LinesCleared(cleared as u8));
     }
+    let perfect_clear = cleared > 0 && is_board_empty(&state.board);
+    apply_scoring(state, spin, cleared as u8, perfect_clear);
 
     let next = state.pop_next();
     state.reset_active(next);
@@ -398,6 +428,208 @@ fn can_place(board: &Board, piece: Piece) -> bool {
         }
         if board.get(x, y).is_some() {
             return false;
+        }
+    }
+    true
+}
+
+const CLEAR_DISPLAY_MS: u64 = 2000;
+
+fn apply_scoring(state: &mut GameState, spin: Option<SpinKind>, cleared: u8, perfect_clear: bool) {
+    let had_clear = cleared > 0;
+    if had_clear {
+        state.lines = state.lines.saturating_add(cleared as u32);
+        state.combo = state.combo.saturating_add(1);
+    } else {
+        state.combo = 0;
+    }
+
+    let difficult = is_difficult_clear(spin, cleared);
+    if had_clear {
+        if difficult {
+            state.b2b = state.b2b.saturating_add(1);
+        } else {
+            state.b2b = 0;
+        }
+    }
+
+    let mut points = base_points(spin, cleared);
+    if difficult && state.b2b >= 2 {
+        points = points.saturating_mul(3) / 2;
+    }
+    if had_clear {
+        points = points.saturating_add(50 * state.combo);
+    }
+    if perfect_clear {
+        points = points.saturating_add(3500);
+    }
+    state.score = state.score.saturating_add(points);
+
+    if had_clear || spin.is_some() || perfect_clear {
+        let mut parts = Vec::new();
+        if let Some(label) = base_label(spin, cleared) {
+            parts.push(label);
+        }
+        if perfect_clear {
+            parts.push("Perfect Clear".to_string());
+        }
+        if difficult && state.b2b >= 1 {
+            parts.push(format!("B2B x{}", state.b2b));
+        }
+        if had_clear {
+            parts.push(format!("Combo x{}", state.combo));
+        }
+        if !parts.is_empty() {
+            state.last_clear_label = Some(parts.join(" | "));
+            state.clear_display_ms = CLEAR_DISPLAY_MS;
+        }
+    }
+}
+
+fn base_points(spin: Option<SpinKind>, cleared: u8) -> u32 {
+    match spin {
+        None => match cleared {
+            1 => 100,
+            2 => 300,
+            3 => 500,
+            4 => 800,
+            _ => 0,
+        },
+        Some(SpinKind::TSpin) => match cleared {
+            0 => 400,
+            1 => 800,
+            2 => 1200,
+            3 => 1600,
+            4 => 2600,
+            _ => 0,
+        },
+        Some(SpinKind::Mini) | Some(SpinKind::AllMini) => match cleared {
+            0 => 100,
+            1 => 200,
+            2 => 400,
+            3 => 800,
+            4 => 1600,
+            _ => 0,
+        },
+    }
+}
+
+fn base_label(spin: Option<SpinKind>, cleared: u8) -> Option<String> {
+    match spin {
+        None => {
+            if cleared == 0 {
+                None
+            } else {
+                Some(line_label(cleared).to_string())
+            }
+        }
+        Some(SpinKind::TSpin) => Some(spin_label("T-Spin", cleared)),
+        Some(SpinKind::Mini) => Some(spin_label("Mini T-Spin", cleared)),
+        Some(SpinKind::AllMini) => Some(spin_label("Mini Spin", cleared)),
+    }
+}
+
+fn spin_label(prefix: &str, cleared: u8) -> String {
+    if cleared == 0 {
+        prefix.to_string()
+    } else {
+        format!("{} {}", prefix, line_label(cleared))
+    }
+}
+
+fn line_label(cleared: u8) -> &'static str {
+    match cleared {
+        1 => "Single",
+        2 => "Double",
+        3 => "Triple",
+        4 => "Quad",
+        _ => "",
+    }
+}
+
+fn is_difficult_clear(spin: Option<SpinKind>, cleared: u8) -> bool {
+    if cleared == 0 {
+        return false;
+    }
+    cleared == 4 || spin.is_some()
+}
+
+fn detect_spin(state: &GameState) -> Option<SpinKind> {
+    if !state.last_action_rotation {
+        return None;
+    }
+    let piece = state.active;
+    if piece.kind == PieceType::T {
+        let (corner_count, front_count) = t_spin_corner_info(&state.board, piece);
+        if corner_count >= 3 {
+            if front_count <= 1 {
+                return Some(SpinKind::Mini);
+            }
+            return Some(SpinKind::TSpin);
+        }
+        return None;
+    }
+
+    if is_all_mini(&state.board, piece) {
+        return Some(SpinKind::AllMini);
+    }
+    None
+}
+
+fn t_spin_corner_info(board: &Board, piece: Piece) -> (u8, u8) {
+    let cx = piece.x + 1;
+    let cy = piece.y + 1;
+    let corners = [
+        (cx - 1, cy - 1),
+        (cx + 1, cy - 1),
+        (cx - 1, cy + 1),
+        (cx + 1, cy + 1),
+    ];
+    let mut occupied = 0u8;
+    for (x, y) in corners {
+        if corner_occupied(board, x, y) {
+            occupied += 1;
+        }
+    }
+
+    let front = t_spin_front_corners(piece.rotation, cx, cy);
+    let mut front_count = 0u8;
+    for (x, y) in front {
+        if corner_occupied(board, x, y) {
+            front_count += 1;
+        }
+    }
+    (occupied, front_count)
+}
+
+fn t_spin_front_corners(rotation: Rotation, cx: i32, cy: i32) -> [(i32, i32); 2] {
+    match rotation.0 % 4 {
+        0 => [(cx - 1, cy - 1), (cx + 1, cy - 1)], // up
+        1 => [(cx + 1, cy - 1), (cx + 1, cy + 1)], // right
+        2 => [(cx - 1, cy + 1), (cx + 1, cy + 1)], // down
+        _ => [(cx - 1, cy - 1), (cx - 1, cy + 1)], // left
+    }
+}
+
+fn corner_occupied(board: &Board, x: i32, y: i32) -> bool {
+    if x < 0 || x >= BOARD_WIDTH as i32 || y < 0 || y >= BOARD_HEIGHT as i32 {
+        return true;
+    }
+    board.get(x, y).is_some()
+}
+
+fn is_all_mini(board: &Board, piece: Piece) -> bool {
+    !can_place(board, offset_piece(piece, -1, 0))
+        && !can_place(board, offset_piece(piece, 1, 0))
+        && !can_place(board, offset_piece(piece, 0, 1))
+}
+
+fn is_board_empty(board: &Board) -> bool {
+    for y in 0..BOARD_HEIGHT as i32 {
+        for x in 0..BOARD_WIDTH as i32 {
+            if board.get(x, y).is_some() {
+                return false;
+            }
         }
     }
     true
