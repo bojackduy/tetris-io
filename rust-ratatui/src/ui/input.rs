@@ -309,6 +309,10 @@ impl InputState {
         self.down.is_down
     }
 
+    pub fn enhanced_input_active(&self) -> bool {
+        self.enhanced_input
+    }
+
     pub fn clear_motion(&mut self) {
         self.left.release();
         self.right.release();

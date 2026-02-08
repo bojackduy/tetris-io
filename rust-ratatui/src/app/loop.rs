@@ -575,6 +575,7 @@ pub fn run() -> io::Result<()> {
                     RenderContext {
                         time_secs,
                         time_label,
+                        enhanced_input: app.session.input.enhanced_input_active(),
                     },
                 );
             }
@@ -602,6 +603,7 @@ pub fn run() -> io::Result<()> {
                     RenderContext {
                         time_secs,
                         time_label: "Time",
+                        enhanced_input: app.session.input.enhanced_input_active(),
                     },
                     selected,
                     title,
@@ -620,6 +622,7 @@ pub fn run() -> io::Result<()> {
                     RenderContext {
                         time_secs,
                         time_label,
+                        enhanced_input: app.session.input.enhanced_input_active(),
                     },
                     selected,
                 );

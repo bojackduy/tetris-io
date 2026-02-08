@@ -17,6 +17,7 @@ use crate::core::{
 pub struct RenderContext {
     pub time_secs: u64,
     pub time_label: &'static str,
+    pub enhanced_input: bool,
 }
 
 pub fn render_game(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
@@ -191,7 +192,10 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
             ctx.time_secs % 60
         )),
     ];
-    let score = Paragraph::new(score_lines).block(Block::default().title("Score").borders(Borders::ALL));
+    let input_label = if ctx.enhanced_input { "ENH" } else { "BASIC" };
+    let score_title = format!("Score [{}]", input_label);
+    let score =
+        Paragraph::new(score_lines).block(Block::default().title(score_title).borders(Borders::ALL));
     frame.render_widget(score, chunks[2]);
 }
 
