@@ -22,7 +22,7 @@ use crate::ui::render::{
     render_game, render_game_over, render_menu, render_pause, render_settings, RenderContext,
 };
 
-const MENU_ITEMS: [&str; 3] = ["New Game", "Settings", "Quit"];
+const MENU_ITEMS: [&str; 4] = ["New Game", "Blitz 2:00", "Settings", "Quit"];
 const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
 const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
 const SETTINGS_ITEMS: [SettingItem; 12] = [
@@ -47,6 +47,21 @@ enum Screen {
     Playing,
     Paused { selected: usize },
     GameOver { selected: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GameMode {
+    Endless,
+    Blitz { duration_secs: u64 },
+}
+
+impl GameMode {
+    fn time_limit_secs(self) -> Option<u64> {
+        match self {
+            GameMode::Endless => None,
+            GameMode::Blitz { duration_secs } => Some(duration_secs),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +114,7 @@ impl SettingItem {
 }
 
 struct GameSession {
+    mode: GameMode,
     state: GameState,
     input: InputState,
     start_time: Instant,
@@ -106,12 +122,14 @@ struct GameSession {
     paused_at: Option<Instant>,
     paused_total: Duration,
     game_over_time: Option<u64>,
+    time_up: bool,
 }
 
 impl GameSession {
-    fn new(config: &AppConfig) -> Self {
+    fn new(config: &AppConfig, mode: GameMode) -> Self {
         let now = Instant::now();
         Self {
+            mode,
             state: GameState::new(random_seed()),
             input: InputState::new(
                 InputConfig {
@@ -126,6 +144,7 @@ impl GameSession {
             paused_at: None,
             paused_total: Duration::from_secs(0),
             game_over_time: None,
+            time_up: false,
         }
     }
 
@@ -137,6 +156,12 @@ impl GameSession {
                 .saturating_sub(self.paused_total);
             elapsed.as_secs()
         })
+    }
+
+    fn remaining_secs(&self, now: Instant) -> Option<u64> {
+        let limit = self.mode.time_limit_secs()?;
+        let elapsed = self.elapsed_secs(now);
+        Some(limit.saturating_sub(elapsed))
     }
 
     fn pause(&mut self, now: Instant) {
@@ -163,7 +188,7 @@ struct App {
 impl App {
     fn new() -> Self {
         let config = AppConfig::default();
-        let session = GameSession::new(&config);
+        let session = GameSession::new(&config, GameMode::Endless);
         Self {
             config,
             screen: Screen::Menu { selected: 0 },
@@ -234,10 +259,19 @@ pub fn run() -> io::Result<()> {
                             KeyCode::Down => move_selection(selected, MENU_ITEMS.len(), 1),
                             KeyCode::Enter => match *selected {
                                 0 => {
-                                    *session = GameSession::new(config);
+                                    *session = GameSession::new(config, GameMode::Endless);
                                     *screen = Screen::Playing;
                                 }
                                 1 => {
+                                    *session = GameSession::new(
+                                        config,
+                                        GameMode::Blitz {
+                                            duration_secs: 120,
+                                        },
+                                    );
+                                    *screen = Screen::Playing;
+                                }
+                                2 => {
                                     *screen = Screen::Settings {
                                         selected: 0,
                                         capture: None,
@@ -297,7 +331,8 @@ pub fn run() -> io::Result<()> {
                             KeyCode::Down => move_selection(selected, GAME_OVER_ITEMS.len(), 1),
                             KeyCode::Enter => match *selected {
                                 0 => {
-                                    *session = GameSession::new(config);
+                                    let mode = session.mode;
+                                    *session = GameSession::new(config, mode);
                                     *screen = Screen::Playing;
                                 }
                                 1 => *screen = Screen::Menu { selected: 0 },
@@ -355,6 +390,17 @@ pub fn run() -> io::Result<()> {
                 continue;
             }
 
+            if let Some(limit) = app.session.mode.time_limit_secs() {
+                if app.session.elapsed_secs(now) >= limit {
+                    app.session.game_over_time = Some(limit);
+                    app.session.time_up = true;
+                    app.session.state.game_over = true;
+                    app.session.input.clear_motion();
+                    app.screen = Screen::GameOver { selected: 0 };
+                    continue;
+                }
+            }
+
             let mut dt = now.duration_since(app.session.last_frame);
             app.session.last_frame = now;
             dt = Duration::from_millis(clamp_dt_ms(dt.as_millis() as u64, 50));
@@ -402,28 +448,48 @@ pub fn run() -> io::Result<()> {
                 render_settings(f, "Settings", &items, selected, &footer);
             }
             Screen::Playing => {
-                let elapsed_secs = app.session.elapsed_secs(now);
+                let (time_secs, time_label) = match app.session.mode {
+                    GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
+                    GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
+                };
                 render_game(
                     f,
                     &app.session.state,
-                    RenderContext { elapsed_secs },
+                    RenderContext {
+                        time_secs,
+                        time_label,
+                    },
                 );
             }
             Screen::GameOver { selected } => {
-                let elapsed_secs = app.session.elapsed_secs(now);
+                let time_secs = match app.session.mode {
+                    GameMode::Endless => app.session.elapsed_secs(now),
+                    GameMode::Blitz { duration_secs } => duration_secs,
+                };
+                let title = if app.session.time_up { "TIME UP" } else { "GAME OVER" };
                 render_game_over(
                     f,
                     &app.session.state,
-                    RenderContext { elapsed_secs },
+                    RenderContext {
+                        time_secs,
+                        time_label: "Time",
+                    },
                     selected,
+                    title,
                 );
             }
             Screen::Paused { selected } => {
-                let elapsed_secs = app.session.elapsed_secs(now);
+                let (time_secs, time_label) = match app.session.mode {
+                    GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
+                    GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
+                };
                 render_pause(
                     f,
                     &app.session.state,
-                    RenderContext { elapsed_secs },
+                    RenderContext {
+                        time_secs,
+                        time_label,
+                    },
                     selected,
                 );
             }

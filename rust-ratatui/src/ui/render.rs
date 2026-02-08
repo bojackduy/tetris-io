@@ -15,7 +15,8 @@ use crate::core::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderContext {
-    pub elapsed_secs: u64,
+    pub time_secs: u64,
+    pub time_label: &'static str,
 }
 
 pub fn render_game(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
@@ -81,6 +82,7 @@ pub fn render_game_over(
     state: &GameState,
     ctx: RenderContext,
     selected: usize,
+    title: &str,
 ) {
     render_game(frame, state, ctx);
 
@@ -90,7 +92,7 @@ pub fn render_game_over(
     let popup = centered_rect(area, width, height);
     frame.render_widget(Clear, popup);
 
-    let block = Block::default().title("GAME OVER").borders(Borders::ALL);
+    let block = Block::default().title(title).borders(Borders::ALL);
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -98,9 +100,10 @@ pub fn render_game_over(
         Line::from(format!("Score {:06}", state.score)),
         Line::from(format!("Lines {:02}", state.lines)),
         Line::from(format!(
-            "Time {:02}:{:02}",
-            ctx.elapsed_secs / 60,
-            ctx.elapsed_secs % 60
+            "{} {:02}:{:02}",
+            ctx.time_label,
+            ctx.time_secs / 60,
+            ctx.time_secs % 60
         )),
     ];
 
@@ -176,7 +179,12 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
         Line::from(format!("Score {:06}", state.score)),
         Line::from(format!("Level {:02}", state.level)),
         Line::from(format!("Lines {:02}", state.lines)),
-        Line::from(format!("Time {:02}:{:02}", ctx.elapsed_secs / 60, ctx.elapsed_secs % 60)),
+        Line::from(format!(
+            "{} {:02}:{:02}",
+            ctx.time_label,
+            ctx.time_secs / 60,
+            ctx.time_secs % 60
+        )),
     ];
     let score = Paragraph::new(score_lines).block(Block::default().title("Score").borders(Borders::ALL));
     frame.render_widget(score, chunks[2]);
