@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table},
 };
 
 use crate::core::{
@@ -12,6 +12,7 @@ use crate::core::{
     rules::ghost_piece,
     state::GameState,
 };
+use crate::ui::input::{keycode_label, KeyBindings};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderContext {
@@ -74,8 +75,88 @@ pub fn render_menu(
     items: &[String],
     selected: usize,
     footer: &str,
+    bindings: KeyBindings,
 ) {
-    render_list_screen(frame, title, items, selected, footer, 40);
+    let area = frame.size();
+    let footer_lines: Vec<Line> = if footer.is_empty() {
+        Vec::new()
+    } else {
+        footer.lines().map(Line::from).collect()
+    };
+    let footer_height = footer_lines.len() as u16;
+    let help_rows = movement_help_rows(bindings);
+    let content_rows = items.len().max(help_rows.len() + 1);
+    let width = 74u16
+        .min(area.width.saturating_sub(2))
+        .max(40);
+    let height = (content_rows as u16 + 6 + footer_height)
+        .min(area.height.saturating_sub(2))
+        .max(10);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(footer_height)])
+        .split(inner);
+
+    let content = chunks[0];
+    let max_item_len = items.iter().map(|item| item.len()).max().unwrap_or(0) as u16;
+    let min_menu_width = 20u16;
+    let max_menu_width = content
+        .width
+        .saturating_sub(24)
+        .max(min_menu_width);
+    let menu_width = (max_item_len + 6).clamp(min_menu_width, max_menu_width);
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(menu_width),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(content);
+
+    let menu_block = Block::default().title("Menu").borders(Borders::ALL);
+    let menu_inner = menu_block.inner(columns[0]);
+    frame.render_widget(menu_block, columns[0]);
+    render_list(frame, items, selected, menu_inner);
+
+    let help_block = Block::default().title("Controls").borders(Borders::ALL);
+    let help_inner = help_block.inner(columns[2]);
+    frame.render_widget(help_block, columns[2]);
+
+    let header = Row::new([Cell::from("Action"), Cell::from("Key")])
+        .style(Style::default().add_modifier(Modifier::BOLD));
+    let rows = help_rows
+        .into_iter()
+        .map(|(action, key)| Row::new([Cell::from(action), Cell::from(key)]))
+        .collect::<Vec<_>>();
+    let table = Table::new(rows, [Constraint::Length(12), Constraint::Min(8)])
+        .header(header)
+        .column_spacing(1);
+    frame.render_widget(table, help_inner);
+
+    if footer_height > 0 {
+        frame.render_widget(Paragraph::new(footer_lines), chunks[1]);
+    }
+}
+
+fn movement_help_rows(bindings: KeyBindings) -> Vec<(String, String)> {
+    vec![
+        ("Move Left".to_string(), keycode_label(bindings.move_left)),
+        ("Move Right".to_string(), keycode_label(bindings.move_right)),
+        ("Soft Drop".to_string(), keycode_label(bindings.soft_drop)),
+        ("Hard Drop".to_string(), keycode_label(bindings.hard_drop)),
+        ("Rotate Left".to_string(), keycode_label(bindings.rotate_left)),
+        ("Rotate Right".to_string(), keycode_label(bindings.rotate_right)),
+        ("Rotate 180".to_string(), keycode_label(bindings.rotate_180)),
+        ("Hold".to_string(), keycode_label(bindings.hold)),
+    ]
 }
 
 pub fn render_settings(

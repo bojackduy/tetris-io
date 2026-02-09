@@ -11,6 +11,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use crate::app::config::AppConfig;
+use crate::app::storage::{HighScore, Storage};
 use crate::app::net::{NetClient, NetLobby, NetMessage};
 use crate::core::command::Command;
 use crate::core::events::Event as GameEvent;
@@ -19,22 +20,31 @@ use crate::core::rules::{step, RulesConfig};
 use crate::core::state::GameState;
 use crate::core::timing::clamp_dt_ms;
 use crate::core::board::PLAY_HEIGHT;
-use crate::ui::input::{InputConfig, InputState, KeyBindings};
+use crate::ui::input::{keycode_label, InputConfig, InputState, KeyBindings};
 use crate::ui::render::{
     render_game, render_game_over, render_game_over_custom, render_info_screen, render_menu,
     render_pause, render_settings, RenderContext,
 };
 
-const MENU_ITEMS: [&str; 8] = [
+const MENU_ITEMS: [&str; 9] = [
     "New Game",
     "Blitz",
     "40 Lines",
     "Cheese Race",
     "Host Multiplayer",
     "Join Multiplayer",
+    "High Scores",
     "Settings",
     "Quit",
 ];
+const MENU_NEW_GAME: usize = 0;
+const MENU_BLITZ: usize = 1;
+const MENU_FORTY_LINES: usize = 2;
+const MENU_CHEESE: usize = 3;
+const MENU_HOST: usize = 4;
+const MENU_JOIN: usize = 5;
+const MENU_SCORES: usize = 6;
+const MENU_SETTINGS: usize = 7;
 const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
 const NET_OVER_ITEMS: [&str; 2] = ["Menu", "Quit"];
 const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
@@ -75,6 +85,8 @@ enum Screen {
     Playing,
     Paused { selected: usize },
     GameOver { selected: usize },
+    NameEntry,
+    HighScores,
     NetHostWait,
     NetJoinInput,
     NetJoinWait,
@@ -263,7 +275,16 @@ impl NetSession {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PendingScore {
+    score: u32,
+    lines: u32,
+    time_secs: u64,
+    mode: String,
+}
+
 struct App {
+    storage: Storage,
     config: AppConfig,
     screen: Screen,
     session: GameSession,
@@ -272,6 +293,9 @@ struct App {
     net_session: Option<NetSession>,
     join_input: String,
     join_error: Option<String>,
+    name_input: String,
+    pending_score: Option<PendingScore>,
+    high_scores: Vec<HighScore>,
     blitz_duration_secs: u64,
     forty_lines_target: u32,
     cheese_target: u32,
@@ -279,10 +303,18 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
-        let config = AppConfig::default();
+    fn new(storage: Storage) -> io::Result<Self> {
+        let config = match storage.load_config()? {
+            Some(config) => config,
+            None => {
+                let config = AppConfig::default();
+                let _ = storage.save_config(&config);
+                config
+            }
+        };
         let session = GameSession::new(&config, GameMode::Endless);
-        Self {
+        Ok(Self {
+            storage,
             config,
             screen: Screen::Menu { selected: 0 },
             session,
@@ -291,11 +323,14 @@ impl App {
             net_session: None,
             join_input: String::new(),
             join_error: None,
+            name_input: String::new(),
+            pending_score: None,
+            high_scores: Vec::new(),
             blitz_duration_secs: BLITZ_DEFAULT_SECS,
             forty_lines_target: FORTY_LINES_DEFAULT_TARGET,
             cheese_target: CHEESE_DEFAULT_TARGET,
             exit: false,
-        }
+        })
     }
 }
 
@@ -315,7 +350,8 @@ pub fn run() -> io::Result<()> {
 
     let _cleanup = CleanupGuard;
 
-    let mut app = App::new();
+    let storage = Storage::open_default()?;
+    let mut app = App::new(storage)?;
     let mut last_tick = Instant::now();
 
     loop {
@@ -331,6 +367,7 @@ pub fn run() -> io::Result<()> {
         while event::poll(Duration::from_millis(0))? {
             let ev = event::read()?;
             let App {
+                storage,
                 screen,
                 config,
                 session,
@@ -339,6 +376,9 @@ pub fn run() -> io::Result<()> {
                 net_session,
                 join_input,
                 join_error,
+                name_input,
+                pending_score,
+                high_scores,
                 blitz_duration_secs,
                 forty_lines_target,
                 cheese_target,
@@ -382,46 +422,46 @@ pub fn run() -> io::Result<()> {
                             KeyCode::Up => move_selection(selected, MENU_ITEMS.len(), -1),
                             KeyCode::Down => move_selection(selected, MENU_ITEMS.len(), 1),
                             KeyCode::Left => {
-                                if *selected == 1 {
+                                if *selected == MENU_BLITZ {
                                     *blitz_duration_secs = adjust_blitz_duration(
                                         *blitz_duration_secs,
                                         -1,
                                     );
-                                } else if *selected == 2 {
+                                } else if *selected == MENU_FORTY_LINES {
                                     *forty_lines_target = adjust_forty_lines_target(
                                         *forty_lines_target,
                                         -1,
                                     );
-                                } else if *selected == 3 {
+                                } else if *selected == MENU_CHEESE {
                                     *cheese_target =
                                         adjust_cheese_target(*cheese_target, -1);
                                 }
                             }
                             KeyCode::Right => {
-                                if *selected == 1 {
+                                if *selected == MENU_BLITZ {
                                     *blitz_duration_secs = adjust_blitz_duration(
                                         *blitz_duration_secs,
                                         1,
                                     );
-                                } else if *selected == 2 {
+                                } else if *selected == MENU_FORTY_LINES {
                                     *forty_lines_target = adjust_forty_lines_target(
                                         *forty_lines_target,
                                         1,
                                     );
-                                } else if *selected == 3 {
+                                } else if *selected == MENU_CHEESE {
                                     *cheese_target =
                                         adjust_cheese_target(*cheese_target, 1);
                                 }
                             }
                             KeyCode::Enter => match *selected {
-                                0 => {
+                                MENU_NEW_GAME => {
                                     *net_lobby = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     *session = GameSession::new(config, GameMode::Endless);
                                     *screen = Screen::Playing;
                                 }
-                                1 => {
+                                MENU_BLITZ => {
                                     *net_lobby = None;
                                     *net_pending = None;
                                     *net_session = None;
@@ -433,7 +473,7 @@ pub fn run() -> io::Result<()> {
                                     );
                                     *screen = Screen::Playing;
                                 }
-                                2 => {
+                                MENU_FORTY_LINES => {
                                     *net_lobby = None;
                                     *net_pending = None;
                                     *net_session = None;
@@ -445,7 +485,7 @@ pub fn run() -> io::Result<()> {
                                     );
                                     *screen = Screen::Playing;
                                 }
-                                3 => {
+                                MENU_CHEESE => {
                                     *net_lobby = None;
                                     *net_pending = None;
                                     *net_session = None;
@@ -457,7 +497,7 @@ pub fn run() -> io::Result<()> {
                                     );
                                     *screen = Screen::Playing;
                                 }
-                                4 => {
+                                MENU_HOST => {
                                     *net_pending = None;
                                     *net_session = None;
                                     *join_error = None;
@@ -472,7 +512,7 @@ pub fn run() -> io::Result<()> {
                                         }
                                     }
                                 }
-                                5 => {
+                                MENU_JOIN => {
                                     *net_lobby = None;
                                     *net_pending = None;
                                     *net_session = None;
@@ -480,7 +520,11 @@ pub fn run() -> io::Result<()> {
                                     *join_error = None;
                                     *screen = Screen::NetJoinInput;
                                 }
-                                6 => {
+                                MENU_SCORES => {
+                                    *high_scores = storage.fetch_high_scores(10).unwrap_or_default();
+                                    *screen = Screen::HighScores;
+                                }
+                                MENU_SETTINGS => {
                                     *screen = Screen::Settings {
                                         selected: 0,
                                         capture: None,
@@ -502,6 +546,7 @@ pub fn run() -> io::Result<()> {
                                     *capture = None;
                                 } else {
                                     apply_binding(config, *item, normalize_keycode(key.code));
+                                    let _ = storage.save_config(config);
                                     *capture = None;
                                 }
                             }
@@ -516,8 +561,14 @@ pub fn run() -> io::Result<()> {
                         match key.code {
                             KeyCode::Up => move_selection(selected, SETTINGS_ITEMS.len(), -1),
                             KeyCode::Down => move_selection(selected, SETTINGS_ITEMS.len(), 1),
-                            KeyCode::Left => adjust_setting(config, item, -1),
-                            KeyCode::Right => adjust_setting(config, item, 1),
+                            KeyCode::Left => {
+                                adjust_setting(config, item, -1);
+                                let _ = storage.save_config(config);
+                            }
+                            KeyCode::Right => {
+                                adjust_setting(config, item, 1);
+                                let _ = storage.save_config(config);
+                            }
                             KeyCode::Enter => {
                                 if item == SettingItem::Back {
                                     *screen = Screen::Menu { selected: 0 };
@@ -551,6 +602,73 @@ pub fn run() -> io::Result<()> {
                             },
                             KeyCode::Esc => *screen = Screen::Menu { selected: 0 },
                             _ => {}
+                        }
+                    }
+                }
+                Screen::NameEntry => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if matches!(key.kind, KeyEventKind::Press) {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    if let Some(score) = pending_score.take() {
+                                        let entry = HighScore {
+                                            name: "Player".to_string(),
+                                            score: score.score,
+                                            lines: score.lines,
+                                            time_secs: score.time_secs,
+                                            mode: score.mode,
+                                        };
+                                        let _ = storage.insert_high_score(&entry);
+                                        *high_scores =
+                                            storage.fetch_high_scores(10).unwrap_or_default();
+                                    }
+                                    name_input.clear();
+                                    *screen = Screen::GameOver { selected: 0 };
+                                }
+                                KeyCode::Enter => {
+                                    if let Some(score) = pending_score.take() {
+                                        let name = name_input.trim();
+                                        let resolved = if name.is_empty() {
+                                            "Player".to_string()
+                                        } else {
+                                            name.to_string()
+                                        };
+                                        let entry = HighScore {
+                                            name: resolved,
+                                            score: score.score,
+                                            lines: score.lines,
+                                            time_secs: score.time_secs,
+                                            mode: score.mode,
+                                        };
+                                        let _ = storage.insert_high_score(&entry);
+                                        *high_scores =
+                                            storage.fetch_high_scores(10).unwrap_or_default();
+                                    }
+                                    name_input.clear();
+                                    *screen = Screen::GameOver { selected: 0 };
+                                }
+                                KeyCode::Backspace => {
+                                    name_input.pop();
+                                }
+                                KeyCode::Char(c) => {
+                                    if (c.is_ascii_graphic() || c == ' ') && name_input.len() < 12 {
+                                        name_input.push(c);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Screen::HighScores => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if matches!(key.kind, KeyEventKind::Press) {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Enter => {
+                                    *screen = Screen::Menu { selected: 0 };
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -684,7 +802,7 @@ pub fn run() -> io::Result<()> {
                     app.session.time_up = true;
                     app.session.state.game_over = true;
                     app.session.input.clear_motion();
-                    app.screen = Screen::GameOver { selected: 0 };
+                    queue_name_entry(&mut app, now);
                     continue;
                 }
             }
@@ -695,7 +813,7 @@ pub fn run() -> io::Result<()> {
                     app.session.time_up = true;
                     app.session.state.game_over = true;
                     app.session.input.clear_motion();
-                    app.screen = Screen::GameOver { selected: 0 };
+                    queue_name_entry(&mut app, now);
                     continue;
                 }
             }
@@ -705,7 +823,7 @@ pub fn run() -> io::Result<()> {
                     app.session.game_over_time = Some(app.session.elapsed_secs(now));
                     app.session.state.game_over = true;
                     app.session.input.clear_motion();
-                    app.screen = Screen::GameOver { selected: 0 };
+                    queue_name_entry(&mut app, now);
                     continue;
                 }
             }
@@ -732,7 +850,7 @@ pub fn run() -> io::Result<()> {
             if events.iter().any(|e| matches!(e, GameEvent::GameOver)) {
                 app.session.game_over_time = Some(app.session.elapsed_secs(now));
                 app.session.input.clear_motion();
-                app.screen = Screen::GameOver { selected: 0 };
+                queue_name_entry(&mut app, now);
             }
         }
 
@@ -869,9 +987,9 @@ pub fn run() -> io::Result<()> {
                     app.cheese_target,
                 );
                 let footer = match selected {
-                    1 => "Enter: play   Left/Right: adjust time   Esc/Q: quit",
-                    2 => "Enter: play   Left/Right: adjust lines   Esc/Q: quit",
-                    3 => "Enter: play   Left/Right: adjust lines   Esc/Q: quit",
+                    MENU_BLITZ => "Enter: play   Left/Right: adjust time   Esc/Q: quit",
+                    MENU_FORTY_LINES => "Enter: play   Left/Right: adjust lines   Esc/Q: quit",
+                    MENU_CHEESE => "Enter: play   Left/Right: adjust lines   Esc/Q: quit",
                     _ => "Enter: select   Esc/Q: quit",
                 };
                 render_menu(
@@ -880,6 +998,7 @@ pub fn run() -> io::Result<()> {
                     &items,
                     selected,
                     footer,
+                    app.config.key_bindings,
                 );
             }
             Screen::Settings { selected, capture } => {
@@ -937,6 +1056,20 @@ pub fn run() -> io::Result<()> {
                     selected,
                     title,
                 );
+            }
+            Screen::NameEntry => {
+                let mut lines = vec!["Enter your name".to_string(), format!("> {}", app.name_input)];
+                if let Some(score) = &app.pending_score {
+                    lines.push(format!("Score {:06}", score.score));
+                    lines.push(format!("Lines {:02}", score.lines));
+                    lines.push(format!("Time {}", format_time_mmss(score.time_secs)));
+                    lines.push(format!("Mode {}", score.mode));
+                }
+                render_info_screen(f, "SAVE SCORE", &lines, "Enter: save   Esc: default");
+            }
+            Screen::HighScores => {
+                let lines = high_score_lines(&app.high_scores);
+                render_info_screen(f, "HIGH SCORES", &lines, "Esc: back");
             }
             Screen::NetHostWait => {
                 let port = app.net_lobby.as_ref().map(|l| l.port).unwrap_or(0);
@@ -1036,6 +1169,22 @@ fn handle_events(state: &mut GameState, events: &[GameEvent]) {
     }
 }
 
+fn queue_name_entry(app: &mut App, now: Instant) {
+    let time_secs = app
+        .session
+        .game_over_time
+        .unwrap_or_else(|| app.session.elapsed_secs(now));
+    let pending = PendingScore {
+        score: app.session.state.score,
+        lines: app.session.state.lines,
+        time_secs,
+        mode: mode_label(app.session.mode),
+    };
+    app.pending_score = Some(pending);
+    app.name_input.clear();
+    app.screen = Screen::NameEntry;
+}
+
 fn settings_lines(config: &AppConfig) -> Vec<String> {
     let KeyBindings {
         move_left,
@@ -1067,6 +1216,26 @@ fn settings_lines(config: &AppConfig) -> Vec<String> {
         .collect()
 }
 
+fn high_score_lines(scores: &[HighScore]) -> Vec<String> {
+    if scores.is_empty() {
+        return vec!["No scores yet.".to_string()];
+    }
+
+    let mut lines = Vec::with_capacity(scores.len() + 1);
+    lines.push(format!("{:<3} {:<12} {:>6}  {}", "#", "Name", "Score", "Mode"));
+    for (idx, score) in scores.iter().enumerate() {
+        let name = truncate_name(&score.name, 12);
+        lines.push(format!(
+            "{:>2}. {:<12} {:>6}  {}",
+            idx + 1,
+            name,
+            score.score,
+            score.mode
+        ));
+    }
+    lines
+}
+
 fn menu_items(
     blitz_duration_secs: u64,
     forty_lines_target: u32,
@@ -1076,9 +1245,9 @@ fn menu_items(
         .iter()
         .enumerate()
         .map(|(idx, label)| match idx {
-            1 => format_blitz_menu_item(blitz_duration_secs),
-            2 => format_forty_lines_menu_item(forty_lines_target),
-            3 => format_cheese_menu_item(cheese_target),
+            MENU_BLITZ => format_blitz_menu_item(blitz_duration_secs),
+            MENU_FORTY_LINES => format_forty_lines_menu_item(forty_lines_target),
+            MENU_CHEESE => format_cheese_menu_item(cheese_target),
             _ => (*label).to_string(),
         })
         .collect()
@@ -1096,6 +1265,25 @@ fn format_blitz_menu_item(duration_secs: u64) -> String {
 
 fn format_time_mmss(duration_secs: u64) -> String {
     format!("{}:{:02}", duration_secs / 60, duration_secs % 60)
+}
+
+fn truncate_name(name: &str, max_len: usize) -> String {
+    let mut out = name.trim().to_string();
+    if out.len() > max_len {
+        out.truncate(max_len);
+    }
+    out
+}
+
+fn mode_label(mode: GameMode) -> String {
+    match mode {
+        GameMode::Endless => "Endless".to_string(),
+        GameMode::Blitz { duration_secs } => {
+            format!("Blitz {}", format_time_mmss(duration_secs))
+        }
+        GameMode::FortyLines { target } => format!("40 Lines {}", target),
+        GameMode::Cheese { target } => format!("Cheese {}", target),
+    }
 }
 
 fn format_forty_lines_menu_item(target: u32) -> String {
@@ -1198,29 +1386,6 @@ fn normalize_keycode(code: KeyCode) -> KeyCode {
     match code {
         KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
         other => other,
-    }
-}
-
-fn keycode_label(code: KeyCode) -> String {
-    match code {
-        KeyCode::Left => "Left Arrow".to_string(),
-        KeyCode::Right => "Right Arrow".to_string(),
-        KeyCode::Up => "Up Arrow".to_string(),
-        KeyCode::Down => "Down Arrow".to_string(),
-        KeyCode::Char(' ') => "Space".to_string(),
-        KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
-        KeyCode::Enter => "Enter".to_string(),
-        KeyCode::Tab => "Tab".to_string(),
-        KeyCode::Backspace => "Backspace".to_string(),
-        KeyCode::Delete => "Delete".to_string(),
-        KeyCode::Insert => "Insert".to_string(),
-        KeyCode::Home => "Home".to_string(),
-        KeyCode::End => "End".to_string(),
-        KeyCode::PageUp => "Page Up".to_string(),
-        KeyCode::PageDown => "Page Down".to_string(),
-        KeyCode::Esc => "Esc".to_string(),
-        KeyCode::F(n) => format!("F{}", n),
-        other => format!("{:?}", other),
     }
 }
 

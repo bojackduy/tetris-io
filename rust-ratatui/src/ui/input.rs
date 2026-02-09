@@ -33,6 +33,89 @@ impl Default for KeyBindings {
     }
 }
 
+pub fn keycode_label(code: KeyCode) -> String {
+    match code {
+        KeyCode::Left => "Left Arrow".to_string(),
+        KeyCode::Right => "Right Arrow".to_string(),
+        KeyCode::Up => "Up Arrow".to_string(),
+        KeyCode::Down => "Down Arrow".to_string(),
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "Page Up".to_string(),
+        KeyCode::PageDown => "Page Down".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::F(n) => format!("F{}", n),
+        other => format!("{:?}", other),
+    }
+}
+
+pub fn keycode_to_storage(code: KeyCode) -> String {
+    match code {
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(c) => format!("Char:{}", c.to_ascii_lowercase()),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::F(n) => format!("F{}", n),
+        other => format!("Other:{:?}", other),
+    }
+}
+
+pub fn keycode_from_storage(value: &str) -> Option<KeyCode> {
+    let raw = value.trim();
+    let lower = raw.to_ascii_lowercase();
+    match lower.as_str() {
+        "left" => Some(KeyCode::Left),
+        "right" => Some(KeyCode::Right),
+        "up" => Some(KeyCode::Up),
+        "down" => Some(KeyCode::Down),
+        "space" => Some(KeyCode::Char(' ')),
+        "enter" => Some(KeyCode::Enter),
+        "tab" => Some(KeyCode::Tab),
+        "backspace" => Some(KeyCode::Backspace),
+        "delete" => Some(KeyCode::Delete),
+        "insert" => Some(KeyCode::Insert),
+        "home" => Some(KeyCode::Home),
+        "end" => Some(KeyCode::End),
+        "pageup" => Some(KeyCode::PageUp),
+        "pagedown" => Some(KeyCode::PageDown),
+        "esc" | "escape" => Some(KeyCode::Esc),
+        _ => {
+            if let Some(rest) = raw.strip_prefix("Char:").or_else(|| raw.strip_prefix("char:")) {
+                let mut chars = rest.chars();
+                let c = chars.next()?;
+                if chars.next().is_none() {
+                    return Some(KeyCode::Char(c));
+                }
+            }
+            if let Some(rest) = lower.strip_prefix('f') {
+                if let Ok(num) = rest.parse::<u8>() {
+                    return Some(KeyCode::F(num));
+                }
+            }
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct InputConfig {
     pub das_ms: u64,
