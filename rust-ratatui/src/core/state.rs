@@ -121,7 +121,7 @@ impl GameState {
             let hole = rng.gen_range(0..BOARD_WIDTH);
             for x in 0..BOARD_WIDTH {
                 if x != hole {
-                    self.board.set(x as i32, row as i32, Some(PieceType::O));
+                    self.board.set_garbage(x as i32, row as i32, Some(PieceType::O));
                 }
             }
         }

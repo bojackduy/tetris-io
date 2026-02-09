@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
 use crate::core::{
@@ -68,7 +68,13 @@ fn render_game_at(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderC
     render_next(frame, right, state);
 }
 
-pub fn render_menu(frame: &mut Frame, title: &str, items: &[String], selected: usize, footer: &str) {
+pub fn render_menu(
+    frame: &mut Frame,
+    title: &str,
+    items: &[String],
+    selected: usize,
+    footer: &str,
+) {
     render_list_screen(frame, title, items, selected, footer, 40);
 }
 
@@ -85,7 +91,9 @@ pub fn render_settings(
 pub fn render_info_screen(frame: &mut Frame, title: &str, lines: &[String], footer: &str) {
     let area = frame.size();
     let width = area.width.min(60).max(24);
-    let height = (lines.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+    let height = (lines.len() as u16 + 6)
+        .min(area.height.saturating_sub(2))
+        .max(8);
     let popup = centered_rect(area, width, height);
     frame.render_widget(Clear, popup);
 
@@ -204,12 +212,7 @@ fn combo_lines(state: &GameState) -> Vec<Line<'static>> {
         .collect()
 }
 
-pub fn render_pause(
-    frame: &mut Frame,
-    state: &GameState,
-    ctx: RenderContext,
-    selected: usize,
-) {
+pub fn render_pause(frame: &mut Frame, state: &GameState, ctx: RenderContext, selected: usize) {
     render_game(frame, state, ctx);
 
     let area = frame.size();
@@ -242,12 +245,13 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
         .split(area);
 
     let hold_lines = piece_preview_lines(state.hold);
-    let hold = Paragraph::new(hold_lines).block(Block::default().title("HOLD").borders(Borders::ALL));
+    let hold =
+        Paragraph::new(hold_lines).block(Block::default().title("HOLD").borders(Borders::ALL));
     frame.render_widget(hold, chunks[0]);
 
     let combo_lines = combo_lines(state);
-    let combo = Paragraph::new(combo_lines)
-        .block(Block::default().title("COMBO").borders(Borders::ALL));
+    let combo =
+        Paragraph::new(combo_lines).block(Block::default().title("COMBO").borders(Borders::ALL));
     frame.render_widget(combo, chunks[1]);
 
     let pending_garbage = state.pending_garbage();
@@ -271,8 +275,8 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
     ];
     let input_label = if ctx.enhanced_input { "ENH" } else { "BASIC" };
     let score_title = format!("Score [{}]", input_label);
-    let score =
-        Paragraph::new(score_lines).block(Block::default().title(score_title).borders(Borders::ALL));
+    let score = Paragraph::new(score_lines)
+        .block(Block::default().title(score_title).borders(Borders::ALL));
     frame.render_widget(score, chunks[2]);
 }
 
@@ -296,7 +300,12 @@ fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
             let span = if let Some(kind) = active_kind {
                 Span::styled("██", Style::default().fg(piece_color(kind)))
             } else if let Some(kind) = filled_kind {
-                Span::styled("██", Style::default().fg(piece_color(kind)))
+                let color = if state.board.is_garbage_cell(x, y) {
+                    garbage_color()
+                } else {
+                    piece_color(kind)
+                };
+                Span::styled("██", Style::default().fg(color))
             } else if let Some(kind) = ghost_kind {
                 Span::styled(
                     "░░",
@@ -424,14 +433,18 @@ fn block_at(blocks: [(i32, i32); 4], x: i32, y: i32) -> Option<()> {
 
 fn piece_color(kind: PieceType) -> Color {
     match kind {
-        PieceType::I => Color::Cyan,
-        PieceType::O => Color::Yellow,
-        PieceType::T => Color::Magenta,
-        PieceType::S => Color::Green,
-        PieceType::Z => Color::Red,
-        PieceType::J => Color::Blue,
-        PieceType::L => Color::LightYellow,
+        PieceType::I => Color::Rgb(68, 175, 223),
+        PieceType::O => Color::Rgb(244, 208, 62),
+        PieceType::T => Color::Rgb(175, 59, 159),
+        PieceType::S => Color::Rgb(82, 181, 79),
+        PieceType::Z => Color::Rgb(187, 64, 80),
+        PieceType::J => Color::Rgb(24, 101, 181),
+        PieceType::L => Color::Rgb(244, 135, 44),
     }
+}
+
+fn garbage_color() -> Color {
+    Color::DarkGray
 }
 
 fn render_list_screen(
@@ -444,7 +457,9 @@ fn render_list_screen(
 ) {
     let area = frame.size();
     let width = width_hint.min(area.width.saturating_sub(2)).max(20);
-    let height = (items.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+    let height = (items.len() as u16 + 6)
+        .min(area.height.saturating_sub(2))
+        .max(8);
     let popup = centered_rect(area, width, height);
     frame.render_widget(Clear, popup);
 
@@ -480,7 +495,11 @@ fn render_list<T: ToString>(frame: &mut Frame, items: &[T], selected: usize, are
         .map(|item| ListItem::new(item.to_string()))
         .collect();
     let list = List::new(list_items)
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("▸ ");
     frame.render_stateful_widget(list, area, &mut state);
 }
@@ -488,7 +507,16 @@ fn render_list<T: ToString>(frame: &mut Frame, items: &[T], selected: usize, are
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
-    let x = area.x.saturating_add((area.width.saturating_sub(width)) / 2);
-    let y = area.y.saturating_add((area.height.saturating_sub(height)) / 2);
-    Rect { x, y, width, height }
+    let x = area
+        .x
+        .saturating_add((area.width.saturating_sub(width)) / 2);
+    let y = area
+        .y
+        .saturating_add((area.height.saturating_sub(height)) / 2);
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
 }

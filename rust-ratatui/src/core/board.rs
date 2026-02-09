@@ -12,12 +12,14 @@ pub type Cell = Option<PieceType>;
 #[derive(Debug, Clone)]
 pub struct Board {
     cells: [[Cell; BOARD_WIDTH]; BOARD_HEIGHT],
+    garbage: [[bool; BOARD_WIDTH]; BOARD_HEIGHT],
 }
 
 impl Board {
     pub fn new() -> Self {
         Self {
             cells: [[None; BOARD_WIDTH]; BOARD_HEIGHT],
+            garbage: [[false; BOARD_WIDTH]; BOARD_HEIGHT],
         }
     }
 
@@ -32,7 +34,24 @@ impl Board {
         if !self.in_bounds(x, y) {
             return;
         }
-        self.cells[y as usize][x as usize] = cell;
+        let yi = y as usize;
+        let xi = x as usize;
+        self.cells[yi][xi] = cell;
+        if cell.is_none() {
+            self.garbage[yi][xi] = false;
+        } else {
+            self.garbage[yi][xi] = false;
+        }
+    }
+
+    pub fn set_garbage(&mut self, x: i32, y: i32, cell: Cell) {
+        if !self.in_bounds(x, y) {
+            return;
+        }
+        let yi = y as usize;
+        let xi = x as usize;
+        self.cells[yi][xi] = cell;
+        self.garbage[yi][xi] = cell.is_some();
     }
 
     pub fn in_bounds(&self, x: i32, y: i32) -> bool {
@@ -49,12 +68,14 @@ impl Board {
             } else {
                 if dst != src {
                     self.cells[dst as usize] = self.cells[src as usize];
+                    self.garbage[dst as usize] = self.garbage[src as usize];
                 }
                 dst -= 1;
             }
         }
         while dst >= 0 {
             self.cells[dst as usize] = [None; BOARD_WIDTH];
+            self.garbage[dst as usize] = [false; BOARD_WIDTH];
             dst -= 1;
         }
         cleared
@@ -76,22 +97,28 @@ impl Board {
         }
 
         let mut next = [[None; BOARD_WIDTH]; BOARD_HEIGHT];
+        let mut next_garbage = [[false; BOARD_WIDTH]; BOARD_HEIGHT];
         for y in 0..(BOARD_HEIGHT - l) {
             next[y] = self.cells[y + l];
+            next_garbage[y] = self.garbage[y + l];
         }
         for i in 0..l {
             let row = BOARD_HEIGHT - l + i;
             let hole = holes.get(i).copied().unwrap_or(0) % BOARD_WIDTH;
             let mut new_row = [None; BOARD_WIDTH];
+            let mut new_garbage = [false; BOARD_WIDTH];
             for x in 0..BOARD_WIDTH {
                 if x != hole {
                     new_row[x] = Some(PieceType::O);
+                    new_garbage[x] = true;
                 }
             }
             next[row] = new_row;
+            next_garbage[row] = new_garbage;
         }
 
         self.cells = next;
+        self.garbage = next_garbage;
         top_out
     }
 
@@ -101,6 +128,13 @@ impl Board {
 
     pub fn cells(&self) -> &[[Cell; BOARD_WIDTH]; BOARD_HEIGHT] {
         &self.cells
+    }
+
+    pub fn is_garbage_cell(&self, x: i32, y: i32) -> bool {
+        if !self.in_bounds(x, y) {
+            return false;
+        }
+        self.garbage[y as usize][x as usize]
     }
 }
 
