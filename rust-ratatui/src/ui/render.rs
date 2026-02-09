@@ -68,22 +68,6 @@ fn render_game_at(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderC
     render_next(frame, right, state);
 }
 
-pub fn render_versus(
-    frame: &mut Frame,
-    left_state: &GameState,
-    right_state: &GameState,
-    ctx: RenderContext,
-) {
-    let area = frame.size();
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Length(1), Constraint::Percentage(50)])
-        .split(area);
-    render_game_at(frame, columns[0], left_state, ctx);
-    render_game_at(frame, columns[2], right_state, ctx);
-    frame.render_widget(Paragraph::new(""), columns[1]);
-}
-
 pub fn render_menu(frame: &mut Frame, title: &str, items: &[String], selected: usize, footer: &str) {
     render_list_screen(frame, title, items, selected, footer, 40);
 }
@@ -96,6 +80,35 @@ pub fn render_settings(
     footer: &str,
 ) {
     render_list_screen(frame, title, items, selected, footer, 56);
+}
+
+pub fn render_info_screen(frame: &mut Frame, title: &str, lines: &[String], footer: &str) {
+    let area = frame.size();
+    let width = area.width.min(60).max(24);
+    let height = (lines.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let content_lines: Vec<Line> = lines.iter().map(|l| Line::from(l.clone())).collect();
+    let footer_lines: Vec<Line> = if footer.is_empty() {
+        Vec::new()
+    } else {
+        footer.lines().map(Line::from).collect()
+    };
+    let footer_height = footer_lines.len() as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(footer_height)])
+        .split(inner);
+
+    frame.render_widget(Paragraph::new(content_lines), chunks[0]);
+    if footer_height > 0 {
+        frame.render_widget(Paragraph::new(footer_lines), chunks[1]);
+    }
 }
 
 pub fn render_game_over(
@@ -139,18 +152,18 @@ pub fn render_game_over(
     render_list(frame, &items, selected, chunks[1]);
 }
 
-pub fn render_versus_over(
+pub fn render_game_over_custom(
     frame: &mut Frame,
-    left_state: &GameState,
-    right_state: &GameState,
+    state: &GameState,
     ctx: RenderContext,
     selected: usize,
     title: &str,
+    items: &[&str],
 ) {
-    render_versus(frame, left_state, right_state, ctx);
+    render_game(frame, state, ctx);
 
     let area = frame.size();
-    let width = area.width.min(48).max(28);
+    let width = area.width.min(42).max(24);
     let height = area.height.min(12).max(8);
     let popup = centered_rect(area, width, height);
     frame.render_widget(Clear, popup);
@@ -160,8 +173,8 @@ pub fn render_versus_over(
     frame.render_widget(block, popup);
 
     let summary_lines = vec![
-        Line::from(format!("P1 Score {:06}", left_state.score)),
-        Line::from(format!("P2 Score {:06}", right_state.score)),
+        Line::from(format!("Score {:06}", state.score)),
+        Line::from(format!("Lines {:02}", state.lines)),
         Line::from(format!(
             "{} {:02}:{:02}",
             ctx.time_label,
@@ -177,8 +190,7 @@ pub fn render_versus_over(
 
     frame.render_widget(Paragraph::new(summary_lines), chunks[0]);
 
-    let items = ["Rematch", "Menu", "Quit"];
-    render_list(frame, &items, selected, chunks[1]);
+    render_list(frame, items, selected, chunks[1]);
 }
 
 fn combo_lines(state: &GameState) -> Vec<Line<'static>> {
