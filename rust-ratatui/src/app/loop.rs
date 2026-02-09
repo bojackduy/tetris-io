@@ -13,6 +13,7 @@ use ratatui::Terminal;
 use crate::app::config::AppConfig;
 use crate::core::command::Command;
 use crate::core::events::Event as GameEvent;
+use crate::core::multiplayer::Arena;
 use crate::core::rng::random_seed;
 use crate::core::rules::{step, RulesConfig};
 use crate::core::state::GameState;
@@ -20,11 +21,21 @@ use crate::core::timing::clamp_dt_ms;
 use crate::core::board::PLAY_HEIGHT;
 use crate::ui::input::{InputConfig, InputState, KeyBindings};
 use crate::ui::render::{
-    render_game, render_game_over, render_menu, render_pause, render_settings, RenderContext,
+    render_game, render_game_over, render_menu, render_pause, render_settings, render_versus,
+    render_versus_over, RenderContext,
 };
 
-const MENU_ITEMS: [&str; 6] = ["New Game", "Blitz", "40 Lines", "Cheese Race", "Settings", "Quit"];
+const MENU_ITEMS: [&str; 7] = [
+    "New Game",
+    "Blitz",
+    "40 Lines",
+    "Cheese Race",
+    "Local Versus",
+    "Settings",
+    "Quit",
+];
 const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
+const VERSUS_OVER_ITEMS: [&str; 3] = ["Rematch", "Menu", "Quit"];
 const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
 const BLITZ_DEFAULT_SECS: u64 = 120;
 const BLITZ_MIN_SECS: u64 = 30;
@@ -61,8 +72,10 @@ enum Screen {
     Menu { selected: usize },
     Settings { selected: usize, capture: Option<SettingItem> },
     Playing,
+    VersusPlaying,
     Paused { selected: usize },
     GameOver { selected: usize },
+    VersusOver { selected: usize, winner: VersusWinner },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +111,13 @@ enum SettingItem {
     Hold,
     HardDrop,
     Back,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VersusWinner {
+    Player1,
+    Player2,
+    Draw,
 }
 
 impl SettingItem {
@@ -203,10 +223,47 @@ impl GameSession {
     }
 }
 
+struct LocalVersusSession {
+    arena: Arena,
+    input_p1: InputState,
+    input_p2: InputState,
+    start_time: Instant,
+    last_frame: Instant,
+}
+
+impl LocalVersusSession {
+    fn new(config: &AppConfig) -> Self {
+        let now = Instant::now();
+        let seed1 = random_seed();
+        let seed2 = seed1 ^ 0x9E3779B97F4A7C15;
+        let state1 = GameState::new(seed1);
+        let state2 = GameState::new(seed2);
+        let input_cfg = InputConfig {
+            das_ms: config.das_ms,
+            arr_ms: config.arr_ms,
+            dcd_ms: config.dcd_ms,
+        };
+        let input_p1 = InputState::new(input_cfg, config.key_bindings);
+        let input_p2 = InputState::new(input_cfg, p2_bindings());
+        Self {
+            arena: Arena::new(vec![state1, state2]),
+            input_p1,
+            input_p2,
+            start_time: now,
+            last_frame: now,
+        }
+    }
+
+    fn elapsed_secs(&self, now: Instant) -> u64 {
+        now.duration_since(self.start_time).as_secs()
+    }
+}
+
 struct App {
     config: AppConfig,
     screen: Screen,
     session: GameSession,
+    versus: Option<LocalVersusSession>,
     blitz_duration_secs: u64,
     forty_lines_target: u32,
     cheese_target: u32,
@@ -221,6 +278,7 @@ impl App {
             config,
             screen: Screen::Menu { selected: 0 },
             session,
+            versus: None,
             blitz_duration_secs: BLITZ_DEFAULT_SECS,
             forty_lines_target: FORTY_LINES_DEFAULT_TARGET,
             cheese_target: CHEESE_DEFAULT_TARGET,
@@ -258,12 +316,15 @@ pub fn run() -> io::Result<()> {
         last_tick = now;
 
         let mut commands = Vec::new();
+        let mut commands_p1 = Vec::new();
+        let mut commands_p2 = Vec::new();
         while event::poll(Duration::from_millis(0))? {
             let ev = event::read()?;
             let App {
                 screen,
                 config,
                 session,
+                versus,
                 blitz_duration_secs,
                 forty_lines_target,
                 cheese_target,
@@ -282,6 +343,27 @@ pub fn run() -> io::Result<()> {
                         }
                     }
                     session.input.handle_event(ev, now, &mut commands);
+                }
+                Screen::VersusPlaying => {
+                    if let Some(match_session) = versus.as_mut() {
+                        if let CrosstermEvent::Key(key) = ev {
+                            if matches!(key.kind, KeyEventKind::Press)
+                                && matches!(key.code, KeyCode::Esc)
+                            {
+                                match_session.input_p1.clear_motion();
+                                match_session.input_p2.clear_motion();
+                                *versus = None;
+                                *screen = Screen::Menu { selected: 0 };
+                                continue;
+                            }
+                        }
+                        match_session
+                            .input_p1
+                            .handle_event(ev.clone(), now, &mut commands_p1);
+                        match_session
+                            .input_p2
+                            .handle_event(ev, now, &mut commands_p2);
+                    }
                 }
                 Screen::Menu { selected } => {
                     if let CrosstermEvent::Key(key) = ev {
@@ -325,10 +407,12 @@ pub fn run() -> io::Result<()> {
                             }
                             KeyCode::Enter => match *selected {
                                 0 => {
+                                    *versus = None;
                                     *session = GameSession::new(config, GameMode::Endless);
                                     *screen = Screen::Playing;
                                 }
                                 1 => {
+                                    *versus = None;
                                     *session = GameSession::new(
                                         config,
                                         GameMode::Blitz {
@@ -338,6 +422,7 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Playing;
                                 }
                                 2 => {
+                                    *versus = None;
                                     *session = GameSession::new(
                                         config,
                                         GameMode::FortyLines {
@@ -347,6 +432,7 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Playing;
                                 }
                                 3 => {
+                                    *versus = None;
                                     *session = GameSession::new(
                                         config,
                                         GameMode::Cheese {
@@ -356,6 +442,10 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Playing;
                                 }
                                 4 => {
+                                    *versus = Some(LocalVersusSession::new(config));
+                                    *screen = Screen::VersusPlaying;
+                                }
+                                5 => {
                                     *screen = Screen::Settings {
                                         selected: 0,
                                         capture: None,
@@ -400,7 +490,10 @@ pub fn run() -> io::Result<()> {
                                     *capture = Some(item);
                                 }
                             }
-                            KeyCode::Esc => *screen = Screen::Menu { selected: 0 },
+                            KeyCode::Esc => {
+                                *versus = None;
+                                *screen = Screen::Menu { selected: 0 };
+                            }
                             _ => {}
                         }
                     }
@@ -420,6 +513,30 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Playing;
                                 }
                                 1 => *screen = Screen::Menu { selected: 0 },
+                                _ => *exit = true,
+                            },
+                            KeyCode::Esc => *screen = Screen::Menu { selected: 0 },
+                            _ => {}
+                        }
+                    }
+                }
+                Screen::VersusOver { selected, .. } => {
+                    if let CrosstermEvent::Key(key) = ev {
+                        if !is_press_or_repeat(key.kind) {
+                            continue;
+                        }
+                        match key.code {
+                            KeyCode::Up => move_selection(selected, VERSUS_OVER_ITEMS.len(), -1),
+                            KeyCode::Down => move_selection(selected, VERSUS_OVER_ITEMS.len(), 1),
+                            KeyCode::Enter => match *selected {
+                                0 => {
+                                    *versus = Some(LocalVersusSession::new(config));
+                                    *screen = Screen::VersusPlaying;
+                                }
+                                1 => {
+                                    *versus = None;
+                                    *screen = Screen::Menu { selected: 0 };
+                                }
                                 _ => *exit = true,
                             },
                             KeyCode::Esc => *screen = Screen::Menu { selected: 0 },
@@ -532,6 +649,72 @@ pub fn run() -> io::Result<()> {
             }
         }
 
+        if matches!(app.screen, Screen::VersusPlaying) {
+            let Some(match_session) = app.versus.as_mut() else {
+                app.screen = Screen::Menu { selected: 0 };
+                continue;
+            };
+
+            match_session
+                .input_p1
+                .repeat_commands(now, &mut commands_p1);
+            match_session
+                .input_p2
+                .repeat_commands(now, &mut commands_p2);
+
+            if commands_p1.iter().any(|c| matches!(c, Command::Quit))
+                || commands_p2.iter().any(|c| matches!(c, Command::Quit))
+            {
+                match_session.input_p1.clear_motion();
+                match_session.input_p2.clear_motion();
+                app.versus = None;
+                app.screen = Screen::Menu { selected: 0 };
+                continue;
+            }
+
+            let mut dt = now.duration_since(match_session.last_frame);
+            match_session.last_frame = now;
+            dt = Duration::from_millis(clamp_dt_ms(dt.as_millis() as u64, 50));
+
+            let rules_cfg = RulesConfig {
+                gravity_ms: app.config.gravity_ms,
+                soft_drop_factor: app.config.soft_drop_factor,
+                lock_delay_ms: app.config.lock_delay_ms,
+                lock_reset_limit: app.config.lock_reset_limit,
+            };
+
+            let _events_p1 = match_session.arena.step_player(
+                0,
+                rules_cfg,
+                dt.as_millis() as u64,
+                &commands_p1,
+                match_session.input_p1.soft_drop_active(),
+            );
+            let _events_p2 = match_session.arena.step_player(
+                1,
+                rules_cfg,
+                dt.as_millis() as u64,
+                &commands_p2,
+                match_session.input_p2.soft_drop_active(),
+            );
+
+            let p1_dead = match_session.arena.players[0].game_over;
+            let p2_dead = match_session.arena.players[1].game_over;
+            if p1_dead || p2_dead {
+                let winner = if p1_dead && !p2_dead {
+                    VersusWinner::Player2
+                } else if p2_dead && !p1_dead {
+                    VersusWinner::Player1
+                } else {
+                    VersusWinner::Draw
+                };
+                app.screen = Screen::VersusOver {
+                    selected: 0,
+                    winner,
+                };
+            }
+        }
+
         terminal.draw(|f| match app.screen {
             Screen::Menu { selected } => {
                 let items = menu_items(
@@ -579,6 +762,22 @@ pub fn run() -> io::Result<()> {
                     },
                 );
             }
+            Screen::VersusPlaying => {
+                if let Some(match_session) = &app.versus {
+                    let time_secs = match_session.elapsed_secs(now);
+                    render_versus(
+                        f,
+                        &match_session.arena.players[0],
+                        &match_session.arena.players[1],
+                        RenderContext {
+                            time_secs,
+                            time_label: "Time",
+                            enhanced_input: match_session.input_p1.enhanced_input_active()
+                                || match_session.input_p2.enhanced_input_active(),
+                        },
+                    );
+                }
+            }
             Screen::GameOver { selected } => {
                 let time_secs = match app.session.mode {
                     GameMode::Endless => app.session.elapsed_secs(now),
@@ -608,6 +807,29 @@ pub fn run() -> io::Result<()> {
                     selected,
                     title,
                 );
+            }
+            Screen::VersusOver { selected, winner } => {
+                if let Some(match_session) = &app.versus {
+                    let time_secs = match_session.elapsed_secs(now);
+                    let title = match winner {
+                        VersusWinner::Player1 => "P1 WINS",
+                        VersusWinner::Player2 => "P2 WINS",
+                        VersusWinner::Draw => "DRAW",
+                    };
+                    render_versus_over(
+                        f,
+                        &match_session.arena.players[0],
+                        &match_session.arena.players[1],
+                        RenderContext {
+                            time_secs,
+                            time_label: "Time",
+                            enhanced_input: match_session.input_p1.enhanced_input_active()
+                                || match_session.input_p2.enhanced_input_active(),
+                        },
+                        selected,
+                        title,
+                    );
+                }
             }
             Screen::Paused { selected } => {
                 let (time_secs, time_label) = match app.session.mode {
@@ -770,6 +992,20 @@ fn apply_binding(config: &mut AppConfig, item: SettingItem, code: KeyCode) {
         SettingItem::Hold => config.key_bindings.hold = code,
         SettingItem::HardDrop => config.key_bindings.hard_drop = code,
         _ => {}
+    }
+}
+
+fn p2_bindings() -> KeyBindings {
+    KeyBindings {
+        move_left: KeyCode::Char('j'),
+        move_right: KeyCode::Char('l'),
+        soft_drop: KeyCode::Char('k'),
+        rotate_left: KeyCode::Char('u'),
+        rotate_right: KeyCode::Char('o'),
+        rotate_180: KeyCode::Char('y'),
+        hold: KeyCode::Char('h'),
+        hard_drop: KeyCode::Char('i'),
+        quit: KeyCode::Char('x'),
     }
 }
 

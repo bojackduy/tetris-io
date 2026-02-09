@@ -1,6 +1,7 @@
 use crate::core::board::{Board, BOARD_HEIGHT, BOARD_WIDTH};
 use crate::core::command::Command;
 use crate::core::events::Event;
+use crate::core::garbage::RoundingMode;
 use crate::core::piece::{Piece, PieceType, Rotation};
 use crate::core::state::GameState;
 
@@ -205,7 +206,64 @@ fn lock_piece(state: &mut GameState, events: &mut Vec<Event>) {
         let _ = state.apply_row_clear_mask(&cleared_mask);
     }
     let perfect_clear = cleared > 0 && is_board_empty(&state.board);
+    let prev_combo = state.combo;
+    let prev_b2b = state.b2b;
+
+    let (attack_lines, surge_lines) = compute_attack_lines(
+        state,
+        spin,
+        cleared as u8,
+        perfect_clear,
+        prev_combo,
+        prev_b2b,
+    );
     apply_scoring(state, spin, cleared as u8, perfect_clear);
+
+    let mut outgoing_segments = Vec::new();
+    if attack_lines > 0 {
+        outgoing_segments.push(attack_lines);
+    }
+    if surge_lines > 0 {
+        outgoing_segments.extend(split_surge_lines(surge_lines));
+    }
+
+    if !outgoing_segments.is_empty() {
+        let total_outgoing: u32 = outgoing_segments.iter().sum();
+        let pending = state.pending_garbage();
+        let mut remaining = total_outgoing;
+        if pending > 0 {
+            let mut cancel_lines = total_outgoing;
+            if state.opener_active() && total_outgoing < pending {
+                cancel_lines = total_outgoing
+                    .saturating_mul(state.garbage_config.opener_cancel_multiplier);
+            }
+            let cancelled = state.cancel_garbage(cancel_lines);
+            let cancelled_outgoing = cancelled.min(total_outgoing);
+            remaining = total_outgoing.saturating_sub(cancelled_outgoing);
+        }
+        if remaining > 0 {
+            for segment in outgoing_segments {
+                if remaining == 0 {
+                    break;
+                }
+                let send = segment.min(remaining);
+                if send > 0 {
+                    events.push(Event::OutgoingGarbage(send));
+                }
+                remaining = remaining.saturating_sub(send);
+            }
+        }
+    }
+
+    if state.pending_garbage() > 0 {
+        if state.apply_pending_garbage() {
+            state.game_over = true;
+            events.push(Event::GameOver);
+            return;
+        }
+    }
+
+    state.pieces_placed = state.pieces_placed.saturating_add(1);
 
     let next = state.pop_next();
     state.reset_active(next);
@@ -634,6 +692,146 @@ fn is_board_empty(board: &Board) -> bool {
         }
     }
     true
+}
+
+fn compute_attack_lines(
+    state: &mut GameState,
+    spin: Option<SpinKind>,
+    cleared: u8,
+    perfect_clear: bool,
+    prev_combo: u32,
+    prev_b2b: u32,
+) -> (u32, u32) {
+    if cleared == 0 {
+        return (0, 0);
+    }
+
+    let current_combo = prev_combo.saturating_add(1);
+    let combo_index = current_combo.saturating_sub(1);
+    let base = base_attack(&state.garbage_config.attack, spin, cleared);
+    let mut attack = combo_adjusted_attack(
+        base,
+        combo_index,
+        state.garbage_config.combo_multiplier_step,
+        state.garbage_config.combo_log_multiplier,
+        state.garbage_config.rounding,
+        &mut state.garbage_rng,
+    );
+
+    let difficult = is_difficult_clear(spin, cleared);
+    if difficult && prev_b2b >= 1 {
+        attack = attack.saturating_add(state.garbage_config.b2b_bonus);
+    }
+    if perfect_clear {
+        attack = attack.saturating_add(state.garbage_config.perfect_clear_bonus);
+    }
+
+    let surge = if !difficult && prev_b2b >= 4 {
+        b2b_surge_lines(prev_b2b, state.garbage_config.surge_start)
+    } else {
+        0
+    };
+
+    (attack, surge)
+}
+
+fn base_attack(
+    table: &crate::core::garbage::AttackTable,
+    spin: Option<SpinKind>,
+    cleared: u8,
+) -> u32 {
+    match spin {
+        None => match cleared {
+            1 => table.single,
+            2 => table.double,
+            3 => table.triple,
+            4 => table.quad,
+            _ => 0,
+        },
+        Some(SpinKind::TSpin) => match cleared {
+            0 => table.t_spin_zero,
+            1 => table.t_spin_single,
+            2 => table.t_spin_double,
+            3 => table.t_spin_triple,
+            _ => 0,
+        },
+        Some(SpinKind::Mini) | Some(SpinKind::AllMini) => match cleared {
+            0 => table.mini_zero,
+            1 => table.mini_single,
+            2 => table.mini_double,
+            _ => 0,
+        },
+    }
+}
+
+fn combo_adjusted_attack(
+    base: u32,
+    combo_index: u32,
+    combo_step: f32,
+    combo_log_multiplier: f32,
+    rounding: RoundingMode,
+    rng: &mut rand::rngs::StdRng,
+) -> u32 {
+    if combo_index == 0 {
+        return base;
+    }
+
+    let value = if base == 0 {
+        if combo_index < 2 {
+            0.0
+        } else {
+            (1.0 + combo_log_multiplier * combo_index as f32).ln()
+        }
+    } else {
+        base as f32 * (1.0 + combo_step * combo_index as f32)
+    };
+
+    round_attack(value, rounding, rng)
+}
+
+fn round_attack(value: f32, rounding: RoundingMode, rng: &mut rand::rngs::StdRng) -> u32 {
+    if value <= 0.0 {
+        return 0;
+    }
+    let floor = value.floor();
+    let frac = value - floor;
+    let mut base = floor as u32;
+    if rounding == RoundingMode::Rng && frac > 0.0 {
+        let roll: f32 = rand::Rng::r#gen(rng);
+        if roll < frac {
+            base = base.saturating_add(1);
+        }
+    }
+    base
+}
+
+fn b2b_surge_lines(b2b: u32, surge_start: u32) -> u32 {
+    if b2b < 4 {
+        return 0;
+    }
+    b2b.saturating_add(surge_start).saturating_sub(4)
+}
+
+fn split_surge_lines(total: u32) -> Vec<u32> {
+    if total == 0 {
+        return Vec::new();
+    }
+    let base = total / 3;
+    let rem = total % 3;
+    let first = base + if rem >= 1 { 1 } else { 0 };
+    let second = base + if rem == 2 { 1 } else { 0 };
+    let third = base;
+    let mut segments = Vec::new();
+    if first > 0 {
+        segments.push(first);
+    }
+    if second > 0 {
+        segments.push(second);
+    }
+    if third > 0 {
+        segments.push(third);
+    }
+    segments
 }
 
 #[cfg(test)]

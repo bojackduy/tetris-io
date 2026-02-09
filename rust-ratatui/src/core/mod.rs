@@ -1,6 +1,8 @@
 pub mod board;
 pub mod command;
 pub mod events;
+pub mod garbage;
+pub mod multiplayer;
 pub mod piece;
 pub mod rng;
 pub mod rules;

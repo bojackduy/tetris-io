@@ -4,6 +4,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::core::board::{Board, BOARD_HEIGHT, BOARD_WIDTH, PLAY_HEIGHT};
+use crate::core::garbage::{GarbageChunk, GarbageConfig, GarbageQueue};
 use crate::core::piece::{Piece, PieceType, Rotation};
 use crate::core::rng::{BagRng, PieceRng};
 
@@ -18,6 +19,10 @@ pub struct GameState {
     pub hold_used: bool,
     pub queue: VecDeque<PieceType>,
     pub rng: BagRng,
+    pub garbage_rng: StdRng,
+    pub garbage_queue: GarbageQueue,
+    pub garbage_config: GarbageConfig,
+    pub pieces_placed: u32,
     pub game_over: bool,
     pub gravity_accum_ms: u64,
     pub lock_delay_ms: u64,
@@ -38,6 +43,7 @@ pub struct GameState {
 impl GameState {
     pub fn new(seed: u64) -> Self {
         let mut rng = BagRng::new(seed);
+        let garbage_rng = StdRng::seed_from_u64(seed ^ 0xD1B54A32D192ED03);
         let mut queue = VecDeque::new();
         for _ in 0..6 {
             queue.push_back(rng.next_piece());
@@ -50,6 +56,10 @@ impl GameState {
             hold_used: false,
             queue,
             rng,
+            garbage_rng,
+            garbage_queue: GarbageQueue::default(),
+            garbage_config: GarbageConfig::default(),
+            pieces_placed: 0,
             game_over: false,
             gravity_accum_ms: 0,
             lock_delay_ms: 0,
@@ -143,5 +153,37 @@ impl GameState {
 
         self.garbage_remaining = self.garbage_remaining.saturating_sub(cleared_garbage);
         cleared_garbage
+    }
+
+    pub fn opener_active(&self) -> bool {
+        self.pieces_placed < self.garbage_config.opener_phase_pieces
+    }
+
+    pub fn pending_garbage(&self) -> u32 {
+        self.garbage_queue.total_lines()
+    }
+
+    pub fn receive_garbage(&mut self, lines: u32) {
+        if lines == 0 {
+            return;
+        }
+        let hole = self.garbage_rng.gen_range(0..BOARD_WIDTH);
+        self.garbage_queue.push(GarbageChunk { lines, hole });
+    }
+
+    pub fn cancel_garbage(&mut self, lines: u32) -> u32 {
+        self.garbage_queue.cancel_lines(lines)
+    }
+
+    pub fn apply_pending_garbage(&mut self) -> bool {
+        let chunks = self.garbage_queue.drain_all();
+        let mut top_out = false;
+        for chunk in chunks {
+            let holes = vec![chunk.hole; chunk.lines as usize];
+            if self.board.insert_garbage(chunk.lines, &holes) {
+                top_out = true;
+            }
+        }
+        top_out
     }
 }

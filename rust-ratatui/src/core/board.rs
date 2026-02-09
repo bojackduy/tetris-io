@@ -60,6 +60,41 @@ impl Board {
         cleared
     }
 
+    pub fn insert_garbage(&mut self, lines: u32, holes: &[usize]) -> bool {
+        let lines = lines.min(BOARD_HEIGHT as u32);
+        if lines == 0 {
+            return false;
+        }
+        let l = lines as usize;
+
+        let mut top_out = false;
+        for y in 0..l {
+            if self.cells[y].iter().any(|c| c.is_some()) {
+                top_out = true;
+                break;
+            }
+        }
+
+        let mut next = [[None; BOARD_WIDTH]; BOARD_HEIGHT];
+        for y in 0..(BOARD_HEIGHT - l) {
+            next[y] = self.cells[y + l];
+        }
+        for i in 0..l {
+            let row = BOARD_HEIGHT - l + i;
+            let hole = holes.get(i).copied().unwrap_or(0) % BOARD_WIDTH;
+            let mut new_row = [None; BOARD_WIDTH];
+            for x in 0..BOARD_WIDTH {
+                if x != hole {
+                    new_row[x] = Some(PieceType::O);
+                }
+            }
+            next[row] = new_row;
+        }
+
+        self.cells = next;
+        top_out
+    }
+
     fn is_row_full(&self, row: usize) -> bool {
         self.cells[row].iter().all(|c| c.is_some())
     }
@@ -83,5 +118,24 @@ mod tests {
         let cleared = board.clear_full_rows();
         assert_eq!(cleared, 1);
         assert_eq!(board.get(0, (BOARD_HEIGHT - 1) as i32), Some(PieceType::O));
+    }
+
+    #[test]
+    fn insert_garbage_shifts_up_and_fills() {
+        let mut board = Board::new();
+        board.set(0, (BOARD_HEIGHT - 1) as i32, Some(PieceType::I));
+        let top_out = board.insert_garbage(1, &[0]);
+        assert!(!top_out);
+        assert_eq!(board.get(0, (BOARD_HEIGHT - 2) as i32), Some(PieceType::I));
+        assert_eq!(board.get(0, (BOARD_HEIGHT - 1) as i32), None);
+        assert_eq!(board.get(1, (BOARD_HEIGHT - 1) as i32), Some(PieceType::O));
+    }
+
+    #[test]
+    fn insert_garbage_top_out_when_blocks_pushed_off() {
+        let mut board = Board::new();
+        board.set(0, 0, Some(PieceType::I));
+        let top_out = board.insert_garbage(1, &[0]);
+        assert!(top_out);
     }
 }

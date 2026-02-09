@@ -22,6 +22,10 @@ pub struct RenderContext {
 
 pub fn render_game(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
     let area = frame.size();
+    render_game_at(frame, area, state, ctx);
+}
+
+fn render_game_at(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
     let board_height = VISIBLE_HEIGHT as u16 + 2;
     let board_width = BOARD_WIDTH as u16 * 2 + 2;
     let left_width: u16 = 14;
@@ -62,6 +66,22 @@ pub fn render_game(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
     render_left(frame, left, state, ctx);
     render_board(frame, board_area, state);
     render_next(frame, right, state);
+}
+
+pub fn render_versus(
+    frame: &mut Frame,
+    left_state: &GameState,
+    right_state: &GameState,
+    ctx: RenderContext,
+) {
+    let area = frame.size();
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Length(1), Constraint::Percentage(50)])
+        .split(area);
+    render_game_at(frame, columns[0], left_state, ctx);
+    render_game_at(frame, columns[2], right_state, ctx);
+    frame.render_widget(Paragraph::new(""), columns[1]);
 }
 
 pub fn render_menu(frame: &mut Frame, title: &str, items: &[String], selected: usize, footer: &str) {
@@ -116,6 +136,48 @@ pub fn render_game_over(
     frame.render_widget(Paragraph::new(summary_lines), chunks[0]);
 
     let items = ["Retry", "Menu", "Quit"];
+    render_list(frame, &items, selected, chunks[1]);
+}
+
+pub fn render_versus_over(
+    frame: &mut Frame,
+    left_state: &GameState,
+    right_state: &GameState,
+    ctx: RenderContext,
+    selected: usize,
+    title: &str,
+) {
+    render_versus(frame, left_state, right_state, ctx);
+
+    let area = frame.size();
+    let width = area.width.min(48).max(28);
+    let height = area.height.min(12).max(8);
+    let popup = centered_rect(area, width, height);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let summary_lines = vec![
+        Line::from(format!("P1 Score {:06}", left_state.score)),
+        Line::from(format!("P2 Score {:06}", right_state.score)),
+        Line::from(format!(
+            "{} {:02}:{:02}",
+            ctx.time_label,
+            ctx.time_secs / 60,
+            ctx.time_secs % 60
+        )),
+    ];
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(inner);
+
+    frame.render_widget(Paragraph::new(summary_lines), chunks[0]);
+
+    let items = ["Rematch", "Menu", "Quit"];
     render_list(frame, &items, selected, chunks[1]);
 }
 
@@ -176,8 +238,11 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
         .block(Block::default().title("COMBO").borders(Borders::ALL));
     frame.render_widget(combo, chunks[1]);
 
+    let pending_garbage = state.pending_garbage();
     let (lines_label, lines_value) = if state.garbage_remaining > 0 {
         ("Garbage", state.garbage_remaining)
+    } else if pending_garbage > 0 {
+        ("Incoming", pending_garbage)
     } else {
         ("Lines", state.lines)
     };
