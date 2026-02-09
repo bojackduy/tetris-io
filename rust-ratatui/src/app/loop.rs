@@ -1,29 +1,31 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+use crossterm::ExecutableCommand;
 use crossterm::event::{
     self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::ExecutableCommand;
-use ratatui::backend::CrosstermBackend;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::app::config::AppConfig;
-use crate::app::storage::{HighScore, Storage};
 use crate::app::net::{NetClient, NetLobby, NetMessage};
+use crate::app::storage::{HighScore, Storage};
+use crate::core::board::PLAY_HEIGHT;
 use crate::core::command::Command;
 use crate::core::events::Event as GameEvent;
 use crate::core::rng::random_seed;
-use crate::core::rules::{step, RulesConfig};
+use crate::core::rules::{RulesConfig, step};
 use crate::core::state::GameState;
 use crate::core::timing::clamp_dt_ms;
-use crate::core::board::PLAY_HEIGHT;
-use crate::ui::input::{keycode_label, InputConfig, InputState, KeyBindings};
+use crate::ui::input::{InputConfig, InputState, KeyBindings, keycode_label};
 use crate::ui::render::{
-    render_game, render_game_over, render_game_over_custom, render_info_screen, render_menu,
-    render_pause, render_settings, RenderContext,
+    RenderContext, render_game, render_game_over, render_game_over_custom, render_info_screen,
+    render_menu, render_pause, render_settings,
 };
 
 const MENU_ITEMS: [&str; 9] = [
@@ -60,7 +62,7 @@ const FORTY_LINES_STEP_TARGET: u32 = 10;
 const FORTY_LINES_LABEL_WIDTH: usize = 26;
 const CHEESE_DEFAULT_TARGET: u32 = 10;
 const CHEESE_MIN_TARGET: u32 = 10;
-const CHEESE_MAX_TARGET: u32 = PLAY_HEIGHT as u32;
+const CHEESE_MAX_TARGET: u32 = PLAY_HEIGHT as u32 + 20;
 const CHEESE_STEP_TARGET: u32 = 1;
 const CHEESE_LABEL_WIDTH: usize = 26;
 const SETTINGS_ITEMS: [SettingItem; 12] = [
@@ -80,18 +82,30 @@ const SETTINGS_ITEMS: [SettingItem; 12] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
-    Menu { selected: usize },
-    Settings { selected: usize, capture: Option<SettingItem> },
+    Menu {
+        selected: usize,
+    },
+    Settings {
+        selected: usize,
+        capture: Option<SettingItem>,
+    },
     Playing,
-    Paused { selected: usize },
-    GameOver { selected: usize },
+    Paused {
+        selected: usize,
+    },
+    GameOver {
+        selected: usize,
+    },
     NameEntry,
     HighScores,
     NetHostWait,
     NetJoinInput,
     NetJoinWait,
     NetPlaying,
-    NetOver { selected: usize, outcome: NetOutcome },
+    NetOver {
+        selected: usize,
+        outcome: NetOutcome,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +248,9 @@ impl GameSession {
 
     fn resume(&mut self, now: Instant) {
         if let Some(paused_at) = self.paused_at.take() {
-            self.paused_total = self.paused_total.saturating_add(now.duration_since(paused_at));
+            self.paused_total = self
+                .paused_total
+                .saturating_add(now.duration_since(paused_at));
             self.last_frame = now;
         }
     }
@@ -423,34 +439,24 @@ pub fn run() -> io::Result<()> {
                             KeyCode::Down => move_selection(selected, MENU_ITEMS.len(), 1),
                             KeyCode::Left => {
                                 if *selected == MENU_BLITZ {
-                                    *blitz_duration_secs = adjust_blitz_duration(
-                                        *blitz_duration_secs,
-                                        -1,
-                                    );
+                                    *blitz_duration_secs =
+                                        adjust_blitz_duration(*blitz_duration_secs, -1);
                                 } else if *selected == MENU_FORTY_LINES {
-                                    *forty_lines_target = adjust_forty_lines_target(
-                                        *forty_lines_target,
-                                        -1,
-                                    );
+                                    *forty_lines_target =
+                                        adjust_forty_lines_target(*forty_lines_target, -1);
                                 } else if *selected == MENU_CHEESE {
-                                    *cheese_target =
-                                        adjust_cheese_target(*cheese_target, -1);
+                                    *cheese_target = adjust_cheese_target(*cheese_target, -1);
                                 }
                             }
                             KeyCode::Right => {
                                 if *selected == MENU_BLITZ {
-                                    *blitz_duration_secs = adjust_blitz_duration(
-                                        *blitz_duration_secs,
-                                        1,
-                                    );
+                                    *blitz_duration_secs =
+                                        adjust_blitz_duration(*blitz_duration_secs, 1);
                                 } else if *selected == MENU_FORTY_LINES {
-                                    *forty_lines_target = adjust_forty_lines_target(
-                                        *forty_lines_target,
-                                        1,
-                                    );
+                                    *forty_lines_target =
+                                        adjust_forty_lines_target(*forty_lines_target, 1);
                                 } else if *selected == MENU_CHEESE {
-                                    *cheese_target =
-                                        adjust_cheese_target(*cheese_target, 1);
+                                    *cheese_target = adjust_cheese_target(*cheese_target, 1);
                                 }
                             }
                             KeyCode::Enter => match *selected {
@@ -521,7 +527,8 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::NetJoinInput;
                                 }
                                 MENU_SCORES => {
-                                    *high_scores = storage.fetch_high_scores(10).unwrap_or_default();
+                                    *high_scores =
+                                        storage.fetch_high_scores(10).unwrap_or_default();
                                     *screen = Screen::HighScores;
                                 }
                                 MENU_SETTINGS => {
@@ -690,17 +697,15 @@ pub fn run() -> io::Result<()> {
                                     *join_error = None;
                                     *screen = Screen::Menu { selected: 0 };
                                 }
-                                KeyCode::Enter => {
-                                    match NetClient::connect(join_input.trim()) {
-                                        Ok(client) => {
-                                            *net_pending = Some(client);
-                                            *screen = Screen::NetJoinWait;
-                                        }
-                                        Err(err) => {
-                                            *join_error = Some(format!("Connect error: {}", err));
-                                        }
+                                KeyCode::Enter => match NetClient::connect(join_input.trim()) {
+                                    Ok(client) => {
+                                        *net_pending = Some(client);
+                                        *screen = Screen::NetJoinWait;
                                     }
-                                }
+                                    Err(err) => {
+                                        *join_error = Some(format!("Connect error: {}", err));
+                                    }
+                                },
                                 KeyCode::Backspace => {
                                     join_input.pop();
                                     *join_error = None;
@@ -752,7 +757,10 @@ pub fn run() -> io::Result<()> {
                 Screen::Paused { selected } => {
                     if let CrosstermEvent::Key(key) = ev {
                         if matches!(key.kind, KeyEventKind::Press)
-                            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P') | KeyCode::Esc)
+                            && matches!(
+                                key.code,
+                                KeyCode::Char('p') | KeyCode::Char('P') | KeyCode::Esc
+                            )
                         {
                             session.resume(now);
                             *screen = Screen::Playing;
@@ -903,9 +911,7 @@ pub fn run() -> io::Result<()> {
                 continue;
             };
 
-            net_session
-                .input
-                .repeat_commands(now, &mut commands);
+            net_session.input.repeat_commands(now, &mut commands);
 
             if commands.iter().any(|c| matches!(c, Command::Quit)) {
                 let _ = net_session.net.send_over();
@@ -1013,7 +1019,9 @@ pub fn run() -> io::Result<()> {
             Screen::Playing => {
                 let (time_secs, time_label) = match app.session.mode {
                     GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
-                    GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
+                    GameMode::Blitz { .. } => {
+                        (app.session.remaining_secs(now).unwrap_or(0), "Left")
+                    }
                     GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
                     GameMode::Cheese { .. } => (app.session.elapsed_secs(now), "Time"),
                 };
@@ -1058,7 +1066,10 @@ pub fn run() -> io::Result<()> {
                 );
             }
             Screen::NameEntry => {
-                let mut lines = vec!["Enter your name".to_string(), format!("> {}", app.name_input)];
+                let mut lines = vec![
+                    "Enter your name".to_string(),
+                    format!("> {}", app.name_input),
+                ];
                 if let Some(score) = &app.pending_score {
                     lines.push(format!("Score {:06}", score.score));
                     lines.push(format!("Lines {:02}", score.lines));
@@ -1086,15 +1097,13 @@ pub fn run() -> io::Result<()> {
                     lines.push(String::new());
                     lines.push(err.clone());
                 }
-                render_info_screen(
-                    f,
-                    "JOIN MULTIPLAYER",
-                    &lines,
-                    "Enter: connect   Esc: back",
-                );
+                render_info_screen(f, "JOIN MULTIPLAYER", &lines, "Enter: connect   Esc: back");
             }
             Screen::NetJoinWait => {
-                let lines = vec!["Connecting...".to_string(), "Waiting for host...".to_string()];
+                let lines = vec![
+                    "Connecting...".to_string(),
+                    "Waiting for host...".to_string(),
+                ];
                 render_info_screen(f, "JOIN MULTIPLAYER", &lines, "Esc: cancel");
             }
             Screen::NetPlaying => {
@@ -1137,7 +1146,9 @@ pub fn run() -> io::Result<()> {
             Screen::Paused { selected } => {
                 let (time_secs, time_label) = match app.session.mode {
                     GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
-                    GameMode::Blitz { .. } => (app.session.remaining_secs(now).unwrap_or(0), "Left"),
+                    GameMode::Blitz { .. } => {
+                        (app.session.remaining_secs(now).unwrap_or(0), "Left")
+                    }
                     GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
                     GameMode::Cheese { .. } => (app.session.elapsed_secs(now), "Time"),
                 };
@@ -1207,7 +1218,9 @@ fn settings_lines(config: &AppConfig) -> Vec<String> {
             SettingItem::MoveRight => format!("{}: {}", item.label(), keycode_label(move_right)),
             SettingItem::SoftDrop => format!("{}: {}", item.label(), keycode_label(soft_drop)),
             SettingItem::RotateLeft => format!("{}: {}", item.label(), keycode_label(rotate_left)),
-            SettingItem::RotateRight => format!("{}: {}", item.label(), keycode_label(rotate_right)),
+            SettingItem::RotateRight => {
+                format!("{}: {}", item.label(), keycode_label(rotate_right))
+            }
             SettingItem::Rotate180 => format!("{}: {}", item.label(), keycode_label(rotate_180)),
             SettingItem::Hold => format!("{}: {}", item.label(), keycode_label(hold)),
             SettingItem::HardDrop => format!("{}: {}", item.label(), keycode_label(hard_drop)),
@@ -1222,7 +1235,10 @@ fn high_score_lines(scores: &[HighScore]) -> Vec<String> {
     }
 
     let mut lines = Vec::with_capacity(scores.len() + 1);
-    lines.push(format!("{:<3} {:<12} {:>6}  {}", "#", "Name", "Score", "Mode"));
+    lines.push(format!(
+        "{:<3} {:<12} {:>6}  {}",
+        "#", "Name", "Score", "Mode"
+    ));
     for (idx, score) in scores.iter().enumerate() {
         let name = truncate_name(&score.name, 12);
         lines.push(format!(
