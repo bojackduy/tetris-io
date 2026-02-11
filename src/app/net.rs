@@ -8,6 +8,7 @@ pub enum NetMessage {
     Start(u64),
     Garbage(u32),
     Over,
+    Ready,
     Disconnect,
 }
 
@@ -66,6 +67,10 @@ impl NetClient {
         self.send_line("OVER")
     }
 
+    pub fn send_ready(&mut self) -> io::Result<()> {
+        self.send_line("READY")
+    }
+
     pub fn try_recv(&mut self) -> Option<NetMessage> {
         self.rx.try_recv().ok()
     }
@@ -108,6 +113,9 @@ fn parse_message(line: &str) -> Option<NetMessage> {
     if trimmed.starts_with("G ") {
         let lines = trimmed[2..].trim().parse().ok()?;
         return Some(NetMessage::Garbage(lines));
+    }
+    if trimmed == "READY" {
+        return Some(NetMessage::Ready);
     }
     if trimmed == "OVER" {
         return Some(NetMessage::Over);

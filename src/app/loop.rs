@@ -79,6 +79,7 @@ const SETTINGS_ITEMS: [SettingItem; 12] = [
     SettingItem::HardDrop,
     SettingItem::Back,
 ];
+const NET_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -266,6 +267,11 @@ struct NetSession {
     remote_disconnect: bool,
 }
 
+struct NetPending {
+    client: NetClient,
+    since: Instant,
+}
+
 impl NetSession {
     fn new(config: &AppConfig, seed: u64, net: NetClient) -> Self {
         let now = Instant::now();
@@ -305,6 +311,7 @@ struct App {
     screen: Screen,
     session: GameSession,
     net_lobby: Option<NetLobby>,
+    net_host_pending: Option<NetPending>,
     net_pending: Option<NetClient>,
     net_session: Option<NetSession>,
     join_input: String,
@@ -335,6 +342,7 @@ impl App {
             screen: Screen::Menu { selected: 0 },
             session,
             net_lobby: None,
+            net_host_pending: None,
             net_pending: None,
             net_session: None,
             join_input: String::new(),
@@ -388,6 +396,7 @@ pub fn run() -> io::Result<()> {
                 config,
                 session,
                 net_lobby,
+                net_host_pending,
                 net_pending,
                 net_session,
                 join_input,
@@ -462,6 +471,7 @@ pub fn run() -> io::Result<()> {
                             KeyCode::Enter => match *selected {
                                 MENU_NEW_GAME => {
                                     *net_lobby = None;
+                                    *net_host_pending = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     *session = GameSession::new(config, GameMode::Endless);
@@ -469,6 +479,7 @@ pub fn run() -> io::Result<()> {
                                 }
                                 MENU_BLITZ => {
                                     *net_lobby = None;
+                                    *net_host_pending = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     *session = GameSession::new(
@@ -481,6 +492,7 @@ pub fn run() -> io::Result<()> {
                                 }
                                 MENU_FORTY_LINES => {
                                     *net_lobby = None;
+                                    *net_host_pending = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     *session = GameSession::new(
@@ -493,6 +505,7 @@ pub fn run() -> io::Result<()> {
                                 }
                                 MENU_CHEESE => {
                                     *net_lobby = None;
+                                    *net_host_pending = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     *session = GameSession::new(
@@ -504,6 +517,7 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Playing;
                                 }
                                 MENU_HOST => {
+                                    *net_host_pending = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     *join_error = None;
@@ -520,6 +534,7 @@ pub fn run() -> io::Result<()> {
                                 }
                                 MENU_JOIN => {
                                     *net_lobby = None;
+                                    *net_host_pending = None;
                                     *net_pending = None;
                                     *net_session = None;
                                     join_input.clear();
@@ -685,6 +700,7 @@ pub fn run() -> io::Result<()> {
                             && matches!(key.code, KeyCode::Esc)
                         {
                             *net_lobby = None;
+                            *net_host_pending = None;
                             *screen = Screen::Menu { selected: 0 };
                         }
                     }
@@ -698,10 +714,16 @@ pub fn run() -> io::Result<()> {
                                     *screen = Screen::Menu { selected: 0 };
                                 }
                                 KeyCode::Enter => match NetClient::connect(join_input.trim()) {
-                                    Ok(client) => {
-                                        *net_pending = Some(client);
-                                        *screen = Screen::NetJoinWait;
-                                    }
+                                    Ok(mut client) => match client.send_ready() {
+                                        Ok(()) => {
+                                            *net_pending = Some(client);
+                                            *screen = Screen::NetJoinWait;
+                                        }
+                                        Err(err) => {
+                                            *join_error =
+                                                Some(format!("Ready error: {}", err));
+                                        }
+                                    },
                                     Err(err) => {
                                         *join_error = Some(format!("Connect error: {}", err));
                                     }
@@ -863,12 +885,45 @@ pub fn run() -> io::Result<()> {
         }
 
         if matches!(app.screen, Screen::NetHostWait) {
-            if let Some(lobby) = app.net_lobby.as_ref() {
-                if let Some(stream) = lobby.try_accept()? {
-                    let mut client = NetClient::from_stream(stream)?;
+            if app.net_host_pending.is_none() {
+                if let Some(lobby) = app.net_lobby.as_ref() {
+                    if let Some(stream) = lobby.try_accept()? {
+                        let client = NetClient::from_stream(stream)?;
+                        app.net_host_pending = Some(NetPending {
+                            client,
+                            since: now,
+                        });
+                    }
+                }
+            }
+
+            let mut ready = false;
+            let mut disconnected = false;
+            let mut timed_out = false;
+            if let Some(pending) = app.net_host_pending.as_mut() {
+                while let Some(msg) = pending.client.try_recv() {
+                    match msg {
+                        NetMessage::Ready => {
+                            ready = true;
+                        }
+                        NetMessage::Disconnect => {
+                            disconnected = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                timed_out =
+                    now.duration_since(pending.since).as_secs() >= NET_HANDSHAKE_TIMEOUT_SECS;
+            }
+
+            if disconnected || timed_out {
+                app.net_host_pending = None;
+            } else if ready {
+                if let Some(mut pending) = app.net_host_pending.take() {
                     let seed = random_seed();
-                    let _ = client.send_start(seed);
-                    app.net_session = Some(NetSession::new(&app.config, seed, client));
+                    let _ = pending.client.send_start(seed);
+                    app.net_session = Some(NetSession::new(&app.config, seed, pending.client));
                     app.net_lobby = None;
                     app.screen = Screen::NetPlaying;
                 }
@@ -1084,8 +1139,13 @@ pub fn run() -> io::Result<()> {
             }
             Screen::NetHostWait => {
                 let port = app.net_lobby.as_ref().map(|l| l.port).unwrap_or(0);
+                let status = if app.net_host_pending.is_some() {
+                    "Client connected. Waiting for ready..."
+                } else {
+                    "Waiting for connection..."
+                };
                 let lines = vec![
-                    "Waiting for connection...".to_string(),
+                    status.to_string(),
                     format!("Port: {}", port),
                     format!("Connect to 127.0.0.1:{}", port),
                 ];
