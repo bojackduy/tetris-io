@@ -1146,8 +1146,8 @@ pub fn run() -> io::Result<()> {
                 };
                 let lines = vec![
                     status.to_string(),
-                    format!("Port: {}", port),
-                    format!("Connect to 127.0.0.1:{}", port),
+                    format!("Listening on 0.0.0.0:{}", port),
+                    "Connect using the host LAN IP".to_string(),
                 ];
                 render_info_screen(f, "HOST MULTIPLAYER", &lines, "Esc: cancel");
             }
