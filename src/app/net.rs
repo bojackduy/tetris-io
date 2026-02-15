@@ -2,6 +2,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
+use tetris_application::ports::NetClientPort;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetMessage {
@@ -121,4 +122,29 @@ fn parse_message(line: &str) -> Option<NetMessage> {
         return Some(NetMessage::Over);
     }
     None
+}
+
+impl NetClientPort for NetClient {
+    type Error = io::Error;
+    type Message = NetMessage;
+
+    fn send_ready(&mut self) -> Result<(), Self::Error> {
+        NetClient::send_ready(self)
+    }
+
+    fn send_start(&mut self, seed: u64) -> Result<(), Self::Error> {
+        NetClient::send_start(self, seed)
+    }
+
+    fn send_garbage(&mut self, lines: u32) -> Result<(), Self::Error> {
+        NetClient::send_garbage(self, lines)
+    }
+
+    fn send_over(&mut self) -> Result<(), Self::Error> {
+        NetClient::send_over(self)
+    }
+
+    fn try_recv(&mut self) -> Option<Self::Message> {
+        NetClient::try_recv(self)
+    }
 }

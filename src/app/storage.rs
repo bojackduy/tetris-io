@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
+use tetris_application::ports::{ConfigPort, HighScorePort};
 
 use crate::app::config::AppConfig;
 use crate::ui::input::{KeyBindings, keycode_from_storage, keycode_to_storage};
@@ -303,4 +304,28 @@ fn now_epoch_secs() -> u64 {
 
 fn to_io_err(err: rusqlite::Error) -> io::Error {
     io::Error::new(io::ErrorKind::Other, err.to_string())
+}
+
+impl ConfigPort<AppConfig> for Storage {
+    type Error = io::Error;
+
+    fn load_config(&self) -> Result<Option<AppConfig>, Self::Error> {
+        Storage::load_config(self)
+    }
+
+    fn save_config(&self, config: &AppConfig) -> Result<(), Self::Error> {
+        Storage::save_config(self, config)
+    }
+}
+
+impl HighScorePort<HighScore> for Storage {
+    type Error = io::Error;
+
+    fn insert_high_score(&self, score: &HighScore) -> Result<(), Self::Error> {
+        Storage::insert_high_score(self, score)
+    }
+
+    fn fetch_high_scores(&self, limit: usize) -> Result<Vec<HighScore>, Self::Error> {
+        Storage::fetch_high_scores(self, limit)
+    }
 }
