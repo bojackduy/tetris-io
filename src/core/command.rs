@@ -1,12 +1,2 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Command {
-    MoveLeft,
-    MoveRight,
-    SoftDrop,
-    HardDrop,
-    RotateLeft,
-    RotateRight,
-    Rotate180,
-    Hold,
-    Quit,
-}
+#[allow(unused_imports)]
+pub use tetris_domain::command::Command;

@@ -12,7 +12,7 @@ use crate::core::{
     rules::ghost_piece,
     state::GameState,
 };
-use crate::ui::input::{keycode_label, KeyBindings};
+use crate::ui::input::{KeyBindings, keycode_label};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderContext {
@@ -86,9 +86,7 @@ pub fn render_menu(
     let footer_height = footer_lines.len() as u16;
     let help_rows = movement_help_rows(bindings);
     let content_rows = items.len().max(help_rows.len() + 1);
-    let width = 74u16
-        .min(area.width.saturating_sub(2))
-        .max(40);
+    let width = 74u16.min(area.width.saturating_sub(2)).max(40);
     let height = (content_rows as u16 + 6 + footer_height)
         .min(area.height.saturating_sub(2))
         .max(10);
@@ -107,10 +105,7 @@ pub fn render_menu(
     let content = chunks[0];
     let max_item_len = items.iter().map(|item| item.len()).max().unwrap_or(0) as u16;
     let min_menu_width = 20u16;
-    let max_menu_width = content
-        .width
-        .saturating_sub(24)
-        .max(min_menu_width);
+    let max_menu_width = content.width.saturating_sub(24).max(min_menu_width);
     let menu_width = (max_item_len + 6).clamp(min_menu_width, max_menu_width);
     let columns = Layout::default()
         .direction(Direction::Horizontal)
@@ -152,8 +147,14 @@ fn movement_help_rows(bindings: KeyBindings) -> Vec<(String, String)> {
         ("Move Right".to_string(), keycode_label(bindings.move_right)),
         ("Soft Drop".to_string(), keycode_label(bindings.soft_drop)),
         ("Hard Drop".to_string(), keycode_label(bindings.hard_drop)),
-        ("Rotate Left".to_string(), keycode_label(bindings.rotate_left)),
-        ("Rotate Right".to_string(), keycode_label(bindings.rotate_right)),
+        (
+            "Rotate Left".to_string(),
+            keycode_label(bindings.rotate_left),
+        ),
+        (
+            "Rotate Right".to_string(),
+            keycode_label(bindings.rotate_right),
+        ),
         ("Rotate 180".to_string(), keycode_label(bindings.rotate_180)),
         ("Hold".to_string(), keycode_label(bindings.hold)),
     ]

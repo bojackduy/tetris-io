@@ -2,10 +2,10 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::app::config::AppConfig;
-use crate::ui::input::{keycode_from_storage, keycode_to_storage, KeyBindings};
+use crate::ui::input::{KeyBindings, keycode_from_storage, keycode_to_storage};
 
 #[derive(Debug, Clone)]
 pub struct HighScore {

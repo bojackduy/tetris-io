@@ -1,4 +1,5 @@
 use std::io;
+use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
 use crossterm::ExecutableCommand;
@@ -15,7 +16,6 @@ use ratatui::backend::CrosstermBackend;
 use crate::app::config::AppConfig;
 use crate::app::net::{NetClient, NetLobby, NetMessage};
 use crate::app::storage::{HighScore, Storage};
-use crate::core::board::PLAY_HEIGHT;
 use crate::core::command::Command;
 use crate::core::events::Event as GameEvent;
 use crate::core::rng::random_seed;
@@ -27,187 +27,26 @@ use crate::ui::render::{
     RenderContext, render_game, render_game_over, render_game_over_custom, render_info_screen,
     render_menu, render_pause, render_settings,
 };
-
-const MENU_ITEMS: [&str; 9] = [
-    "New Game",
-    "Blitz",
-    "40 Lines",
-    "Cheese Race",
-    "Host Multiplayer",
-    "Join Multiplayer",
-    "High Scores",
-    "Settings",
-    "Quit",
-];
-const MENU_NEW_GAME: usize = 0;
-const MENU_BLITZ: usize = 1;
-const MENU_FORTY_LINES: usize = 2;
-const MENU_CHEESE: usize = 3;
-const MENU_HOST: usize = 4;
-const MENU_JOIN: usize = 5;
-const MENU_SCORES: usize = 6;
-const MENU_SETTINGS: usize = 7;
-const GAME_OVER_ITEMS: [&str; 3] = ["Retry", "Menu", "Quit"];
-const NET_OVER_ITEMS: [&str; 2] = ["Menu", "Quit"];
-const PAUSE_ITEMS: [&str; 3] = ["Resume", "Menu", "Quit"];
-const BLITZ_DEFAULT_SECS: u64 = 120;
-const BLITZ_MIN_SECS: u64 = 30;
-const BLITZ_MAX_SECS: u64 = 600;
-const BLITZ_STEP_SECS: u64 = 30;
-const BLITZ_LABEL_WIDTH: usize = 26;
-const FORTY_LINES_DEFAULT_TARGET: u32 = 40;
-const FORTY_LINES_MIN_TARGET: u32 = 10;
-const FORTY_LINES_MAX_TARGET: u32 = 200;
-const FORTY_LINES_STEP_TARGET: u32 = 10;
-const FORTY_LINES_LABEL_WIDTH: usize = 26;
-const CHEESE_DEFAULT_TARGET: u32 = 10;
-const CHEESE_MIN_TARGET: u32 = 10;
-const CHEESE_MAX_TARGET: u32 = PLAY_HEIGHT as u32 + 20;
-const CHEESE_STEP_TARGET: u32 = 1;
-const CHEESE_LABEL_WIDTH: usize = 26;
-const SETTINGS_ITEMS: [SettingItem; 12] = [
-    SettingItem::Das,
-    SettingItem::Arr,
-    SettingItem::Dcd,
-    SettingItem::MoveLeft,
-    SettingItem::MoveRight,
-    SettingItem::SoftDrop,
-    SettingItem::RotateLeft,
-    SettingItem::RotateRight,
-    SettingItem::Rotate180,
-    SettingItem::Hold,
-    SettingItem::HardDrop,
-    SettingItem::Back,
-];
-const NET_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Screen {
-    Menu {
-        selected: usize,
-    },
-    Settings {
-        selected: usize,
-        capture: Option<SettingItem>,
-    },
-    Playing,
-    Paused {
-        selected: usize,
-    },
-    GameOver {
-        selected: usize,
-    },
-    NameEntry,
-    HighScores,
-    NetHostWait,
-    NetJoinInput,
-    NetJoinWait,
-    NetPlaying,
-    NetOver {
-        selected: usize,
-        outcome: NetOutcome,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GameMode {
-    Endless,
-    Blitz { duration_secs: u64 },
-    FortyLines { target: u32 },
-    Cheese { target: u32 },
-}
-
-impl GameMode {
-    fn time_limit_secs(self) -> Option<u64> {
-        match self {
-            GameMode::Endless => None,
-            GameMode::Blitz { duration_secs } => Some(duration_secs),
-            GameMode::FortyLines { .. } => None,
-            GameMode::Cheese { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SettingItem {
-    Das,
-    Arr,
-    Dcd,
-    MoveLeft,
-    MoveRight,
-    SoftDrop,
-    RotateLeft,
-    RotateRight,
-    Rotate180,
-    Hold,
-    HardDrop,
-    Back,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NetOutcome {
-    Win,
-    Lose,
-    Draw,
-    Disconnect,
-}
-
-impl SettingItem {
-    fn label(self) -> &'static str {
-        match self {
-            SettingItem::Das => "DAS (ms)",
-            SettingItem::Arr => "ARR (ms)",
-            SettingItem::Dcd => "DCD (ms)",
-            SettingItem::MoveLeft => "Move Left",
-            SettingItem::MoveRight => "Move Right",
-            SettingItem::SoftDrop => "Soft Drop",
-            SettingItem::RotateLeft => "Rotate Left",
-            SettingItem::RotateRight => "Rotate Right",
-            SettingItem::Rotate180 => "Rotate 180",
-            SettingItem::Hold => "Hold",
-            SettingItem::HardDrop => "Hard Drop",
-            SettingItem::Back => "Back",
-        }
-    }
-
-    fn is_binding(self) -> bool {
-        matches!(
-            self,
-            SettingItem::MoveLeft
-                | SettingItem::MoveRight
-                | SettingItem::SoftDrop
-                | SettingItem::RotateLeft
-                | SettingItem::RotateRight
-                | SettingItem::Rotate180
-                | SettingItem::Hold
-                | SettingItem::HardDrop
-        )
-    }
-}
+use tetris_application::flow::{
+    BLITZ_DEFAULT_SECS, CHEESE_DEFAULT_TARGET, FORTY_LINES_DEFAULT_TARGET, GAME_OVER_ITEMS,
+    GameMode, MENU_BLITZ, MENU_CHEESE, MENU_FORTY_LINES, MENU_HOST, MENU_ITEMS, MENU_JOIN,
+    MENU_NEW_GAME, MENU_SCORES, MENU_SETTINGS, NET_HANDSHAKE_TIMEOUT_SECS, NET_OVER_ITEMS,
+    NetOutcome, PAUSE_ITEMS, SETTINGS_ITEMS, Screen, SettingItem, adjust_blitz_duration,
+    adjust_cheese_target, adjust_forty_lines_target, clamp_u64, format_time_mmss, menu_items,
+    mode_label, move_selection,
+};
+use tetris_application::session::GameSessionState;
 
 struct GameSession {
-    mode: GameMode,
-    state: GameState,
+    session: GameSessionState,
     input: InputState,
-    start_time: Instant,
-    last_frame: Instant,
-    paused_at: Option<Instant>,
-    paused_total: Duration,
-    game_over_time: Option<u64>,
-    time_up: bool,
 }
 
 impl GameSession {
     fn new(config: &AppConfig, mode: GameMode) -> Self {
-        let now = Instant::now();
         let seed = random_seed();
-        let mut state = GameState::new(seed);
-        if let GameMode::Cheese { target } = mode {
-            state.seed_cheese(target, seed);
-        }
         Self {
-            mode,
-            state,
+            session: GameSessionState::new(seed, mode),
             input: InputState::new(
                 InputConfig {
                     das_ms: config.das_ms,
@@ -216,44 +55,21 @@ impl GameSession {
                 },
                 config.key_bindings,
             ),
-            start_time: now,
-            last_frame: now,
-            paused_at: None,
-            paused_total: Duration::from_secs(0),
-            game_over_time: None,
-            time_up: false,
         }
     }
+}
 
-    fn elapsed_secs(&self, now: Instant) -> u64 {
-        self.game_over_time.unwrap_or_else(|| {
-            let effective_now = self.paused_at.unwrap_or(now);
-            let elapsed = effective_now
-                .duration_since(self.start_time)
-                .saturating_sub(self.paused_total);
-            elapsed.as_secs()
-        })
+impl Deref for GameSession {
+    type Target = GameSessionState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.session
     }
+}
 
-    fn remaining_secs(&self, now: Instant) -> Option<u64> {
-        let limit = self.mode.time_limit_secs()?;
-        let elapsed = self.elapsed_secs(now);
-        Some(limit.saturating_sub(elapsed))
-    }
-
-    fn pause(&mut self, now: Instant) {
-        if self.paused_at.is_none() {
-            self.paused_at = Some(now);
-        }
-    }
-
-    fn resume(&mut self, now: Instant) {
-        if let Some(paused_at) = self.paused_at.take() {
-            self.paused_total = self
-                .paused_total
-                .saturating_add(now.duration_since(paused_at));
-            self.last_frame = now;
-        }
+impl DerefMut for GameSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.session
     }
 }
 
@@ -720,8 +536,7 @@ pub fn run() -> io::Result<()> {
                                             *screen = Screen::NetJoinWait;
                                         }
                                         Err(err) => {
-                                            *join_error =
-                                                Some(format!("Ready error: {}", err));
+                                            *join_error = Some(format!("Ready error: {}", err));
                                         }
                                     },
                                     Err(err) => {
@@ -869,12 +684,13 @@ pub fn run() -> io::Result<()> {
                 lock_reset_limit: app.config.lock_reset_limit,
             };
 
+            let soft_drop_active = app.session.input.soft_drop_active();
             let events = step(
                 &mut app.session.state,
                 rules_cfg,
                 dt.as_millis() as u64,
                 &commands,
-                app.session.input.soft_drop_active(),
+                soft_drop_active,
             );
             handle_events(&mut app.session.state, &events);
             if events.iter().any(|e| matches!(e, GameEvent::GameOver)) {
@@ -889,10 +705,7 @@ pub fn run() -> io::Result<()> {
                 if let Some(lobby) = app.net_lobby.as_ref() {
                     if let Some(stream) = lobby.try_accept()? {
                         let client = NetClient::from_stream(stream)?;
-                        app.net_host_pending = Some(NetPending {
-                            client,
-                            since: now,
-                        });
+                        app.net_host_pending = Some(NetPending { client, since: now });
                     }
                 }
             }
@@ -987,12 +800,13 @@ pub fn run() -> io::Result<()> {
                 lock_reset_limit: app.config.lock_reset_limit,
             };
 
+            let soft_drop_active = net_session.input.soft_drop_active();
             let events = step(
                 &mut net_session.state,
                 rules_cfg,
                 dt.as_millis() as u64,
                 &commands,
-                net_session.input.soft_drop_active(),
+                soft_drop_active,
             );
 
             for event in &events {
@@ -1312,72 +1126,12 @@ fn high_score_lines(scores: &[HighScore]) -> Vec<String> {
     lines
 }
 
-fn menu_items(
-    blitz_duration_secs: u64,
-    forty_lines_target: u32,
-    cheese_target: u32,
-) -> Vec<String> {
-    MENU_ITEMS
-        .iter()
-        .enumerate()
-        .map(|(idx, label)| match idx {
-            MENU_BLITZ => format_blitz_menu_item(blitz_duration_secs),
-            MENU_FORTY_LINES => format_forty_lines_menu_item(forty_lines_target),
-            MENU_CHEESE => format_cheese_menu_item(cheese_target),
-            _ => (*label).to_string(),
-        })
-        .collect()
-}
-
-fn format_blitz_menu_item(duration_secs: u64) -> String {
-    let time_label = format_time_mmss(duration_secs);
-    format!(
-        "{:<width$} {}",
-        "Blitz",
-        time_label,
-        width = BLITZ_LABEL_WIDTH
-    )
-}
-
-fn format_time_mmss(duration_secs: u64) -> String {
-    format!("{}:{:02}", duration_secs / 60, duration_secs % 60)
-}
-
 fn truncate_name(name: &str, max_len: usize) -> String {
     let mut out = name.trim().to_string();
     if out.len() > max_len {
         out.truncate(max_len);
     }
     out
-}
-
-fn mode_label(mode: GameMode) -> String {
-    match mode {
-        GameMode::Endless => "Endless".to_string(),
-        GameMode::Blitz { duration_secs } => {
-            format!("Blitz {}", format_time_mmss(duration_secs))
-        }
-        GameMode::FortyLines { target } => format!("40 Lines {}", target),
-        GameMode::Cheese { target } => format!("Cheese {}", target),
-    }
-}
-
-fn format_forty_lines_menu_item(target: u32) -> String {
-    format!(
-        "{:<width$} {}",
-        "40 Lines",
-        target,
-        width = FORTY_LINES_LABEL_WIDTH
-    )
-}
-
-fn format_cheese_menu_item(target: u32) -> String {
-    format!(
-        "{:<width$} {}",
-        "Cheese Race",
-        target,
-        width = CHEESE_LABEL_WIDTH
-    )
 }
 
 fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
@@ -1388,31 +1142,6 @@ fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
         SettingItem::Dcd => config.dcd_ms = clamp_u64(config.dcd_ms, delta * 5, 0, 500),
         _ => {}
     }
-}
-
-fn adjust_blitz_duration(duration_secs: u64, direction: i32) -> u64 {
-    let delta = direction as i64 * BLITZ_STEP_SECS as i64;
-    clamp_u64(duration_secs, delta, BLITZ_MIN_SECS, BLITZ_MAX_SECS)
-}
-
-fn adjust_forty_lines_target(target: u32, direction: i32) -> u32 {
-    let delta = direction as i64 * FORTY_LINES_STEP_TARGET as i64;
-    clamp_u64(
-        target as u64,
-        delta,
-        FORTY_LINES_MIN_TARGET as u64,
-        FORTY_LINES_MAX_TARGET as u64,
-    ) as u32
-}
-
-fn adjust_cheese_target(target: u32, direction: i32) -> u32 {
-    let delta = direction as i64 * CHEESE_STEP_TARGET as i64;
-    clamp_u64(
-        target as u64,
-        delta,
-        CHEESE_MIN_TARGET as u64,
-        CHEESE_MAX_TARGET as u64,
-    ) as u32
 }
 
 fn apply_binding(config: &mut AppConfig, item: SettingItem, code: KeyCode) {
@@ -1427,31 +1156,6 @@ fn apply_binding(config: &mut AppConfig, item: SettingItem, code: KeyCode) {
         SettingItem::HardDrop => config.key_bindings.hard_drop = code,
         _ => {}
     }
-}
-
-fn clamp_u64(value: u64, delta: i64, min: u64, max: u64) -> u64 {
-    let mut v = value as i64 + delta;
-    if v < min as i64 {
-        v = min as i64;
-    }
-    if v > max as i64 {
-        v = max as i64;
-    }
-    v as u64
-}
-
-fn move_selection(selected: &mut usize, len: usize, direction: i32) {
-    if len == 0 {
-        return;
-    }
-    let len_i = len as i32;
-    let mut idx = *selected as i32 + direction;
-    if idx < 0 {
-        idx = len_i - 1;
-    } else if idx >= len_i {
-        idx = 0;
-    }
-    *selected = idx as usize;
 }
 
 fn is_press_or_repeat(kind: KeyEventKind) -> bool {
