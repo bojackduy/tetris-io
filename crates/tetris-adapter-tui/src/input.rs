@@ -248,6 +248,118 @@ impl DasState {
     }
 }
 
+/// Virtual key state for legacy terminals (inferred from Press event gaps)
+/// In legacy mode, OS only sends Press events - we infer Release from gaps
+#[derive(Debug, Default, Clone, Copy)]
+struct VirtualKey {
+    /// Whether we believe this key is held (inferred)
+    is_held: bool,
+    /// When the last Press event arrived
+    last_press: Option<Instant>,
+}
+
+impl VirtualKey {
+    /// Process an incoming Press event
+    /// Returns true if this is a NEW press (start of hold), false if OS repeat
+    fn on_press(&mut self, now: Instant, gap_threshold_ms: u64) -> bool {
+        let is_new_press = match self.last_press {
+            None => true, // First ever press
+            Some(last) => {
+                // If gap > threshold, key was released and pressed again
+                now.duration_since(last) > Duration::from_millis(gap_threshold_ms)
+            }
+        };
+
+        self.last_press = Some(now);
+        if is_new_press {
+            self.is_held = true;
+        }
+        is_new_press
+    }
+
+    /// Check if key should be considered released (gap exceeded)
+    /// Call this from repeat_commands to infer release
+    fn check_release(&mut self, now: Instant, gap_threshold_ms: u64) -> bool {
+        if !self.is_held {
+            return false;
+        }
+        if let Some(last) = self.last_press {
+            if now.duration_since(last) > Duration::from_millis(gap_threshold_ms) {
+                self.is_held = false;
+                return true; // Just released
+            }
+        }
+        false
+    }
+}
+
+/// Auto-calibration for OS keyboard repeat rate (legacy mode)
+/// Measures the interval between consecutive Press events to determine
+/// when a gap indicates a key release vs normal OS repeat
+#[derive(Debug, Clone)]
+struct LegacyCalibration {
+    /// Measured intervals between consecutive Press events (same key)
+    samples: Vec<u64>,
+    /// Number of samples needed before calibration is complete
+    samples_needed: usize,
+    /// Computed gap threshold (2x average interval)
+    gap_threshold_ms: u64,
+    /// Whether calibration is complete
+    calibrated: bool,
+}
+
+impl Default for LegacyCalibration {
+    fn default() -> Self {
+        Self {
+            samples: Vec::with_capacity(8),
+            samples_needed: 5,
+            // Default threshold before calibration: 80ms
+            // Typical OS repeat is ~30-50ms, so 80ms should catch most releases
+            gap_threshold_ms: 80,
+            calibrated: false,
+        }
+    }
+}
+
+impl LegacyCalibration {
+    /// Record an interval between consecutive Press events for the same key
+    fn record_interval(&mut self, interval_ms: u64) {
+        if self.calibrated {
+            return;
+        }
+
+        // Filter out outliers (likely actual releases, not repeats)
+        // Only accept intervals that look like OS repeats (< 100ms)
+        if interval_ms > 100 {
+            return;
+        }
+
+        self.samples.push(interval_ms);
+
+        if self.samples.len() >= self.samples_needed {
+            self.finalize();
+        }
+    }
+
+    fn finalize(&mut self) {
+        if self.samples.is_empty() {
+            return;
+        }
+
+        // Compute average interval
+        let sum: u64 = self.samples.iter().sum();
+        let avg = sum / self.samples.len() as u64;
+
+        // Set threshold to ~2x average (with minimum floor)
+        self.gap_threshold_ms = (avg * 2).max(60);
+        self.calibrated = true;
+    }
+
+    fn threshold(&self) -> u64 {
+        self.gap_threshold_ms
+    }
+}
+
 /// Soft drop repeat state (similar to DAS but for vertical)
 #[derive(Debug, Default, Clone, Copy)]
 struct SoftDropState {
@@ -309,7 +421,7 @@ impl SoftDropState {
 pub struct InputState {
     cfg: InputConfig,
     bindings: KeyBindings,
-    /// Physical key states (what the OS tells us)
+    /// Physical key states (what the OS tells us) - used in enhanced mode
     left_key: PhysicalKey,
     right_key: PhysicalKey,
     down_key: PhysicalKey,
@@ -321,6 +433,14 @@ pub struct InputState {
     lockout_until: Option<Instant>,
     /// Whether terminal supports enhanced input (Release/Repeat events)
     enhanced_input: bool,
+
+    // === Legacy mode state (for terminals without Release/Repeat events) ===
+    /// Virtual key states - inferred from Press event timing
+    legacy_left: VirtualKey,
+    legacy_right: VirtualKey,
+    legacy_down: VirtualKey,
+    /// Auto-calibration for OS repeat interval detection
+    legacy_calibration: LegacyCalibration,
 }
 
 impl InputState {
@@ -335,6 +455,11 @@ impl InputState {
             soft_drop: SoftDropState::default(),
             lockout_until: None,
             enhanced_input: false,
+            // Legacy mode state
+            legacy_left: VirtualKey::default(),
+            legacy_right: VirtualKey::default(),
+            legacy_down: VirtualKey::default(),
+            legacy_calibration: LegacyCalibration::default(),
         }
     }
 
@@ -346,10 +471,15 @@ impl InputState {
 
     /// Called once per frame to generate repeat commands from DAS/ARR
     pub fn repeat_commands(&mut self, now: Instant, out: &mut Vec<Command>) {
-        if !self.enhanced_input {
-            return;
+        if self.enhanced_input {
+            self.repeat_commands_enhanced(now, out);
+        } else {
+            self.repeat_commands_legacy(now, out);
         }
+    }
 
+    /// Enhanced mode: use physical key state from OS Release events
+    fn repeat_commands_enhanced(&mut self, now: Instant, out: &mut Vec<Command>) {
         // Safety net: auto-release keys that haven't received events (missed Release)
         const STALE_TIMEOUT_MS: u64 = 500;
         self.left_key.auto_release_if_stale(now, STALE_TIMEOUT_MS);
@@ -380,6 +510,86 @@ impl InputState {
             .poll_repeat(now, self.cfg.das_ms, self.cfg.arr_ms)
         {
             out.push(cmd);
+        }
+    }
+
+    /// Legacy mode: infer key releases from timing gaps in Press events
+    fn repeat_commands_legacy(&mut self, now: Instant, out: &mut Vec<Command>) {
+        let threshold = self.legacy_calibration.threshold();
+
+        // Check for inferred releases (gap exceeded threshold)
+        let left_released = self.legacy_left.check_release(now, threshold);
+        let right_released = self.legacy_right.check_release(now, threshold);
+        let down_released = self.legacy_down.check_release(now, threshold);
+
+        // SOCD resolution for legacy mode
+        self.resolve_das_direction_legacy(now, left_released, right_released, out);
+
+        // Soft drop resolution
+        if down_released && self.soft_drop.active {
+            self.soft_drop.stop();
+        }
+
+        // Skip repeats during lockout
+        if self.lockout_active(now) {
+            return;
+        }
+
+        // Poll DAS for horizontal repeat
+        if let Some(cmd) = self.das.poll_repeat(now, self.cfg.das_ms, self.cfg.arr_ms) {
+            out.push(cmd);
+        }
+
+        // Poll soft drop for repeat
+        if let Some(cmd) = self
+            .soft_drop
+            .poll_repeat(now, self.cfg.das_ms, self.cfg.arr_ms)
+        {
+            out.push(cmd);
+        }
+    }
+
+    /// SOCD resolution for legacy mode - uses virtual key state
+    fn resolve_das_direction_legacy(
+        &mut self,
+        now: Instant,
+        left_released: bool,
+        right_released: bool,
+        out: &mut Vec<Command>,
+    ) {
+        match self.das.active_dir {
+            Some(Dir::Left) => {
+                if left_released || !self.legacy_left.is_held {
+                    // Left released - check if right is still held (SOCD fallback)
+                    if self.legacy_right.is_held {
+                        let precharge = self.cfg.das_ms.saturating_sub(self.cfg.dcd_ms);
+                        self.das.start_with_precharge(Dir::Right, now, precharge);
+                        out.push(Command::MoveRight);
+                    } else {
+                        self.das.stop();
+                    }
+                }
+            }
+            Some(Dir::Right) => {
+                if right_released || !self.legacy_right.is_held {
+                    // Right released - check if left is still held (SOCD fallback)
+                    if self.legacy_left.is_held {
+                        let precharge = self.cfg.das_ms.saturating_sub(self.cfg.dcd_ms);
+                        self.das.start_with_precharge(Dir::Left, now, precharge);
+                        out.push(Command::MoveLeft);
+                    } else {
+                        self.das.stop();
+                    }
+                }
+            }
+            None => {
+                // No active direction - check if we should start one
+                if self.legacy_left.is_held && !self.legacy_right.is_held {
+                    self.das.start(Dir::Left, now);
+                } else if self.legacy_right.is_held && !self.legacy_left.is_held {
+                    self.das.start(Dir::Right, now);
+                }
+            }
         }
     }
 
@@ -436,9 +646,9 @@ impl InputState {
             self.enhanced_input = true;
         }
 
-        // Fallback for terminals without enhanced input - use raw OS events
+        // Fallback for terminals without enhanced input - use stateful virtual keys
         if !self.enhanced_input {
-            self.handle_key_fallback(key, out);
+            self.handle_key_fallback(key, now, out);
             return;
         }
 
@@ -582,19 +792,65 @@ impl InputState {
         }
     }
 
-    /// Fallback for terminals without enhanced input - simple press-only handling
-    fn handle_key_fallback(&mut self, key: KeyEvent, out: &mut Vec<Command>) {
+    /// Fallback for terminals without enhanced input - stateful with virtual key tracking
+    /// In legacy mode, OS only sends Press events. We infer Release from timing gaps.
+    fn handle_key_fallback(&mut self, key: KeyEvent, now: Instant, out: &mut Vec<Command>) {
         if !matches!(key.kind, KeyEventKind::Press) {
             return;
         }
 
+        let threshold = self.legacy_calibration.threshold();
+
+        // Movement keys - Left
         if matches_keycode(key.code, self.bindings.move_left) {
-            out.push(Command::MoveLeft);
-        } else if matches_keycode(key.code, self.bindings.move_right) {
-            out.push(Command::MoveRight);
-        } else if matches_keycode(key.code, self.bindings.soft_drop) {
-            out.push(Command::SoftDrop);
-        } else if matches_keycode(key.code, self.bindings.rotate_left) {
+            // Record interval for calibration
+            if let Some(last) = self.legacy_left.last_press {
+                let interval = now.duration_since(last).as_millis() as u64;
+                self.legacy_calibration.record_interval(interval);
+            }
+
+            let is_new_press = self.legacy_left.on_press(now, threshold);
+            if is_new_press {
+                // New press: emit immediate command and start DAS
+                self.handle_legacy_left_press(now, out);
+            }
+            // OS repeat: suppress command, let DAS/ARR handle it
+            return;
+        }
+
+        // Movement keys - Right
+        if matches_keycode(key.code, self.bindings.move_right) {
+            if let Some(last) = self.legacy_right.last_press {
+                let interval = now.duration_since(last).as_millis() as u64;
+                self.legacy_calibration.record_interval(interval);
+            }
+
+            let is_new_press = self.legacy_right.on_press(now, threshold);
+            if is_new_press {
+                self.handle_legacy_right_press(now, out);
+            }
+            return;
+        }
+
+        // Movement keys - Soft Drop
+        if matches_keycode(key.code, self.bindings.soft_drop) {
+            if let Some(last) = self.legacy_down.last_press {
+                let interval = now.duration_since(last).as_millis() as u64;
+                self.legacy_calibration.record_interval(interval);
+            }
+
+            let is_new_press = self.legacy_down.on_press(now, threshold);
+            if is_new_press {
+                // New press: emit immediate soft drop and start repeat timer
+                self.soft_drop.start(now);
+                out.push(Command::SoftDrop);
+            }
+            // OS repeat: suppress, let soft_drop timer handle it
+            return;
+        }
+
+        // Non-movement keys - fire on every Press (no DAS/ARR)
+        if matches_keycode(key.code, self.bindings.rotate_left) {
             out.push(Command::RotateLeft);
         } else if matches_keycode(key.code, self.bindings.rotate_right) {
             out.push(Command::RotateRight);
@@ -609,8 +865,41 @@ impl InputState {
         }
     }
 
+    /// Handle left key press in legacy mode - SOCD with last-input priority
+    fn handle_legacy_left_press(&mut self, now: Instant, out: &mut Vec<Command>) {
+        let was_going_right = matches!(self.das.active_dir, Some(Dir::Right));
+
+        if was_going_right {
+            // Direction switch: apply DCD
+            let precharge = self.cfg.das_ms.saturating_sub(self.cfg.dcd_ms);
+            self.das.start_with_precharge(Dir::Left, now, precharge);
+        } else {
+            self.das.start(Dir::Left, now);
+        }
+
+        out.push(Command::MoveLeft);
+    }
+
+    /// Handle right key press in legacy mode - SOCD with last-input priority
+    fn handle_legacy_right_press(&mut self, now: Instant, out: &mut Vec<Command>) {
+        let was_going_left = matches!(self.das.active_dir, Some(Dir::Left));
+
+        if was_going_left {
+            let precharge = self.cfg.das_ms.saturating_sub(self.cfg.dcd_ms);
+            self.das.start_with_precharge(Dir::Right, now, precharge);
+        } else {
+            self.das.start(Dir::Right, now);
+        }
+
+        out.push(Command::MoveRight);
+    }
+
     pub fn soft_drop_active(&self) -> bool {
-        self.down_key.is_down
+        if self.enhanced_input {
+            self.down_key.is_down
+        } else {
+            self.legacy_down.is_held
+        }
     }
 
     pub fn enhanced_input_active(&self) -> bool {
@@ -618,9 +907,15 @@ impl InputState {
     }
 
     pub fn clear_motion(&mut self) {
+        // Enhanced mode state
         self.left_key.release();
         self.right_key.release();
         self.down_key.release();
+        // Legacy mode state
+        self.legacy_left.is_held = false;
+        self.legacy_right.is_held = false;
+        self.legacy_down.is_held = false;
+        // Shared state
         self.das.stop();
         self.soft_drop.stop();
     }
