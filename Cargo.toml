@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/tetris-domain", "crates/tetris-application"]
+members = [
+    "crates/tetris-domain",
+    "crates/tetris-application",
+    "crates/tetris-adapter-net-tcp",
+    "crates/tetris-adapter-tui",
+    "crates/tetris-adapter-storage-sqlite",
+]
 
 [package]
 name = "rust-ratatui"
@@ -10,6 +16,8 @@ edition = "2024"
 ratatui = "0.26"
 crossterm = "0.27"
 rand = "0.8"
-rusqlite = "0.31"
+tetris-adapter-net-tcp = { path = "crates/tetris-adapter-net-tcp" }
+tetris-adapter-storage-sqlite = { path = "crates/tetris-adapter-storage-sqlite" }
+tetris-adapter-tui = { path = "crates/tetris-adapter-tui" }
 tetris-application = { path = "crates/tetris-application" }
 tetris-domain = { path = "crates/tetris-domain" }

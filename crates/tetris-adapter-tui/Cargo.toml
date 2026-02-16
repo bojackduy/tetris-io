@@ -1,0 +1,9 @@
+[package]
+name = "tetris-adapter-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm = "0.27"
+ratatui = "0.26"
+tetris-domain = { path = "../tetris-domain" }

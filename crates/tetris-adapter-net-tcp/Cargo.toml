@@ -1,0 +1,7 @@
+[package]
+name = "tetris-adapter-net-tcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tetris-application = { path = "../tetris-application" }
