@@ -1,4 +1,4 @@
-use crate::ui::input::KeyBindings;
+use tetris_adapter_tui::input::KeyBindings;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AppConfig {

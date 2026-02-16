@@ -12,19 +12,19 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-
-use crate::app::config::AppConfig;
-use crate::app::net::{NetClient, NetLobby, NetMessage};
-use crate::app::storage::{HighScore, Storage};
-use crate::core::command::Command;
-use crate::core::events::Event as GameEvent;
-use crate::core::rng::random_seed;
-use crate::core::rules::RulesConfig;
-use crate::ui::input::{InputConfig, InputState, KeyBindings, keycode_label};
-use crate::ui::render::{
+use tetris_adapter_net_tcp::{NetClient, NetLobby, NetMessage};
+use tetris_adapter_tui::input::{InputConfig, InputState, KeyBindings, keycode_label};
+use tetris_adapter_tui::render::{
     RenderContext, render_game, render_game_over, render_game_over_custom, render_info_screen,
     render_menu, render_pause, render_settings,
 };
+use tetris_domain::command::Command;
+use tetris_domain::events::Event as GameEvent;
+use tetris_domain::rng::random_seed;
+use tetris_domain::rules::RulesConfig;
+
+use crate::app::config::AppConfig;
+use crate::app::storage::{HighScore, Storage};
 use tetris_application::flow::{
     GAME_OVER_ITEMS, GameMode, MENU_BLITZ, MENU_CHEESE, MENU_FORTY_LINES,
     NET_HANDSHAKE_TIMEOUT_SECS, NET_OVER_ITEMS, NetOutcome, PAUSE_ITEMS, SETTINGS_ITEMS, Screen,

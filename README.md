@@ -33,39 +33,29 @@ This is a modern Tetris implementation featuring a clean, deterministic core eng
 ## Architecture
 
 ```
+crates/
+  tetris-domain/                  # Pure deterministic game engine
+  tetris-application/             # App flow/reducers/session/gameplay services
+  tetris-adapter-tui/             # Ratatui + crossterm adapter
+  tetris-adapter-net-tcp/         # TCP networking adapter
+  tetris-adapter-storage-sqlite/  # SQLite storage adapter
+  tetris-bin/                     # Composition root and executable entrypoint
+
 src/
-  core/           # Pure, deterministic game logic
-    board.rs      # Grid management, line clears
-    piece.rs      # Piece types, rotations, shapes
-    rng.rs        # 7-bag random number generator
-    state.rs      # Game state (board, active, queue, hold)
-    rules.rs      # Collision, lock, gravity, clearing
-    command.rs    # Input command enum
-    events.rs     # Game events (line clear, lock, etc.)
-    timing.rs     # Tick/step helpers
-    garbage.rs    # Garbage system for multiplayer
-    multiplayer.rs # Multiplayer support
-  ui/             # Terminal UI layer
-    render.rs     # Ratatui rendering
-    input.rs      # Key mapping to commands
-  app/            # Application layer
-    loop.rs       # Main game loop, fixed timestep
-    config.rs     # Keybindings, tick rates
-    net.rs        # Networking for multiplayer
-    storage.rs    # Save/load functionality
-  main.rs         # Entry point
+  app/                            # Runtime orchestration glue for current app wiring
+  lib.rs                          # Root library exports used by tetris-bin
 ```
 
 ## Building
 
 ```bash
-cargo build --release
+cargo build -p tetris-bin --release
 ```
 
 ## Running
 
 ```bash
-cargo run --release
+cargo run -p tetris-bin --release
 ```
 
 ## Dependencies

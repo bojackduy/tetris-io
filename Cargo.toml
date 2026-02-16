@@ -5,6 +5,7 @@ members = [
     "crates/tetris-adapter-net-tcp",
     "crates/tetris-adapter-tui",
     "crates/tetris-adapter-storage-sqlite",
+    "crates/tetris-bin",
 ]
 
 [package]
