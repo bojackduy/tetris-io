@@ -1,7 +1,13 @@
 [package]
 name = "tetris-adapter-net-tcp"
-version = "0.1.0"
-edition = "2024"
+description = "TCP networking adapter for Tetris multiplayer — host and join over LAN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["tetris", "multiplayer", "tcp", "networking", "lan"]
+categories = ["games", "network-programming"]
 
 [dependencies]
-tetris-application = { path = "../tetris-application" }
+tetris-application = { path = "../tetris-application", version = "0.1.0" }

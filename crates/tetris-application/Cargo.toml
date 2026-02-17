@@ -1,7 +1,13 @@
 [package]
 name = "tetris-application"
-version = "0.1.0"
-edition = "2024"
+description = "Application layer for Tetris — game flow, reducers, sessions, and port definitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["tetris", "application", "game-flow", "hexagonal"]
+categories = ["games"]
 
 [dependencies]
-tetris-domain = { path = "../tetris-domain" }
+tetris-domain = { path = "../tetris-domain", version = "0.1.0" }

@@ -1,9 +1,15 @@
 [package]
 name = "tetris-adapter-tui"
-version = "0.1.0"
-edition = "2024"
+description = "Terminal UI adapter for Tetris — Ratatui rendering and Crossterm input handling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["tetris", "tui", "ratatui", "crossterm", "terminal"]
+categories = ["games", "command-line-interface"]
 
 [dependencies]
 crossterm = "0.27"
 ratatui = "0.26"
-tetris-domain = { path = "../tetris-domain" }
+tetris-domain = { path = "../tetris-domain", version = "0.1.0" }

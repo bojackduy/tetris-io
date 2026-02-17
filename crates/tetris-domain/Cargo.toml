@@ -1,7 +1,13 @@
 [package]
 name = "tetris-domain"
-version = "0.1.0"
-edition = "2024"
+description = "Pure deterministic Tetris game engine — board, pieces, rotation, scoring, and rules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["tetris", "game-engine", "domain", "srs", "rotation"]
+categories = ["games", "game-engines"]
 
 [dependencies]
 rand = "0.8"
