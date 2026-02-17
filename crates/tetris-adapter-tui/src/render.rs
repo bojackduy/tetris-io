@@ -1,12 +1,12 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    Frame,
 };
 
-use crate::input::{KeyBindings, keycode_label};
+use crate::input::{keycode_label, KeyBindings};
 use tetris_domain::{
     board::{BOARD_WIDTH, VISIBLE_HEIGHT, VISIBLE_START_Y},
     piece::{Piece, PieceType},
@@ -1207,7 +1207,7 @@ fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
                         .add_modifier(Modifier::DIM),
                 )
             } else {
-                Span::raw("  ")
+                Span::styled("· ", Style::default().fg(Color::DarkGray))
             };
             spans.push(span);
         }
