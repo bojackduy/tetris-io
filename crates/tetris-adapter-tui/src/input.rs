@@ -109,10 +109,10 @@ pub fn keycode_from_storage(value: &str) -> Option<KeyCode> {
                     return Some(KeyCode::Char(c));
                 }
             }
-            if let Some(rest) = lower.strip_prefix('f') {
-                if let Ok(num) = rest.parse::<u8>() {
-                    return Some(KeyCode::F(num));
-                }
+            if let Some(rest) = lower.strip_prefix('f')
+                && let Ok(num) = rest.parse::<u8>()
+            {
+                return Some(KeyCode::F(num));
             }
             None
         }
@@ -153,10 +153,10 @@ impl PhysicalKey {
         if !self.is_down {
             return;
         }
-        if let Some(last) = self.last_event {
-            if now.duration_since(last) >= Duration::from_millis(timeout_ms) {
-                self.release();
-            }
+        if let Some(last) = self.last_event
+            && now.duration_since(last) >= Duration::from_millis(timeout_ms)
+        {
+            self.release();
         }
     }
 }
@@ -283,11 +283,11 @@ impl VirtualKey {
         if !self.is_held {
             return false;
         }
-        if let Some(last) = self.last_press {
-            if now.duration_since(last) > Duration::from_millis(gap_threshold_ms) {
-                self.is_held = false;
-                return true; // Just released
-            }
+        if let Some(last) = self.last_press
+            && now.duration_since(last) > Duration::from_millis(gap_threshold_ms)
+        {
+            self.is_held = false;
+            return true; // Just released
         }
         false
     }
@@ -939,7 +939,7 @@ impl InputState {
 
 fn matches_keycode(actual: KeyCode, expected: KeyCode) -> bool {
     match (actual, expected) {
-        (KeyCode::Char(a), KeyCode::Char(b)) => a.to_ascii_lowercase() == b.to_ascii_lowercase(),
+        (KeyCode::Char(a), KeyCode::Char(b)) => a.eq_ignore_ascii_case(&b),
         _ => actual == expected,
     }
 }

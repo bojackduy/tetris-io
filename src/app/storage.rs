@@ -39,44 +39,37 @@ impl Storage {
             return Ok(None);
         };
 
-        let mut config = AppConfig::default();
-        config.gravity_ms = stored.gravity_ms;
-        config.frame_ms = stored.frame_ms;
-        config.das_ms = stored.das_ms;
-        config.arr_ms = stored.arr_ms;
-        config.dcd_ms = stored.dcd_ms;
-        config.soft_drop_factor = stored.soft_drop_factor;
-        config.lock_delay_ms = stored.lock_delay_ms;
-        config.lock_reset_limit = stored.lock_reset_limit;
+        let defaults = AppConfig::default();
+        let key_bindings = KeyBindings {
+            move_left: keycode_from_storage(&stored.key_move_left)
+                .unwrap_or(defaults.key_bindings.move_left),
+            move_right: keycode_from_storage(&stored.key_move_right)
+                .unwrap_or(defaults.key_bindings.move_right),
+            soft_drop: keycode_from_storage(&stored.key_soft_drop)
+                .unwrap_or(defaults.key_bindings.soft_drop),
+            rotate_left: keycode_from_storage(&stored.key_rotate_left)
+                .unwrap_or(defaults.key_bindings.rotate_left),
+            rotate_right: keycode_from_storage(&stored.key_rotate_right)
+                .unwrap_or(defaults.key_bindings.rotate_right),
+            rotate_180: keycode_from_storage(&stored.key_rotate_180)
+                .unwrap_or(defaults.key_bindings.rotate_180),
+            hold: keycode_from_storage(&stored.key_hold).unwrap_or(defaults.key_bindings.hold),
+            hard_drop: keycode_from_storage(&stored.key_hard_drop)
+                .unwrap_or(defaults.key_bindings.hard_drop),
+            quit: keycode_from_storage(&stored.key_quit).unwrap_or(defaults.key_bindings.quit),
+        };
 
-        let KeyBindings {
-            move_left,
-            move_right,
-            soft_drop,
-            rotate_left,
-            rotate_right,
-            rotate_180,
-            hold,
-            hard_drop,
-            quit,
-        } = config.key_bindings;
-
-        config.key_bindings.move_left =
-            keycode_from_storage(&stored.key_move_left).unwrap_or(move_left);
-        config.key_bindings.move_right =
-            keycode_from_storage(&stored.key_move_right).unwrap_or(move_right);
-        config.key_bindings.soft_drop =
-            keycode_from_storage(&stored.key_soft_drop).unwrap_or(soft_drop);
-        config.key_bindings.rotate_left =
-            keycode_from_storage(&stored.key_rotate_left).unwrap_or(rotate_left);
-        config.key_bindings.rotate_right =
-            keycode_from_storage(&stored.key_rotate_right).unwrap_or(rotate_right);
-        config.key_bindings.rotate_180 =
-            keycode_from_storage(&stored.key_rotate_180).unwrap_or(rotate_180);
-        config.key_bindings.hold = keycode_from_storage(&stored.key_hold).unwrap_or(hold);
-        config.key_bindings.hard_drop =
-            keycode_from_storage(&stored.key_hard_drop).unwrap_or(hard_drop);
-        config.key_bindings.quit = keycode_from_storage(&stored.key_quit).unwrap_or(quit);
+        let config = AppConfig {
+            gravity_ms: stored.gravity_ms,
+            frame_ms: stored.frame_ms,
+            das_ms: stored.das_ms,
+            arr_ms: stored.arr_ms,
+            dcd_ms: stored.dcd_ms,
+            soft_drop_factor: stored.soft_drop_factor,
+            lock_delay_ms: stored.lock_delay_ms,
+            lock_reset_limit: stored.lock_reset_limit,
+            key_bindings,
+        };
 
         Ok(Some(config))
     }

@@ -1,12 +1,12 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
-use crate::input::{keycode_label, KeyBindings};
+use crate::input::{KeyBindings, keycode_label};
 use tetris_domain::{
     board::{BOARD_WIDTH, VISIBLE_HEIGHT, VISIBLE_START_Y},
     piece::{Piece, PieceType},
@@ -322,6 +322,7 @@ fn parse_menu_item(item: &str) -> (String, Option<String>) {
     (trimmed.to_string(), None)
 }
 
+#[allow(dead_code)]
 fn movement_help_rows(bindings: KeyBindings) -> Vec<(String, String)> {
     vec![
         ("Move Left".to_string(), keycode_label(bindings.move_left)),
@@ -353,7 +354,7 @@ pub fn render_settings(
 
 pub fn render_info_screen(frame: &mut Frame, title: &str, lines: &[String], footer: &str) {
     let area = frame.size();
-    let width = area.width.min(60).max(24);
+    let width = area.width.clamp(24, 60);
     let height = (lines.len() as u16 + 6)
         .min(area.height.saturating_sub(2))
         .max(8);
@@ -1046,17 +1047,17 @@ fn render_next_dimmed(frame: &mut Frame, area: Rect, state: &GameState) {
     let pad = ((inner_w_chars - preview_w_chars).max(0) / 2) as usize;
 
     let mut lines: Vec<Line> = Vec::with_capacity(inner_h);
-    for y in 0..inner_h {
+    for row in grid.iter().take(inner_h) {
         let mut spans: Vec<Span> = Vec::new();
         if pad > 0 {
             spans.push(Span::raw(" ".repeat(pad)));
         }
-        for x in 0..preview_w {
-            if let Some(kind) = grid[y][x] {
+        for cell in row.iter().take(preview_w) {
+            if let Some(kind) = cell {
                 spans.push(Span::styled(
                     "░░",
                     Style::default()
-                        .fg(piece_color(kind))
+                        .fg(piece_color(*kind))
                         .add_modifier(Modifier::DIM),
                 ));
             } else {
@@ -1082,17 +1083,17 @@ fn piece_preview_lines_dimmed(kind: Option<PieceType>) -> Vec<Line<'static>> {
             y: 0,
         };
         for (x, y) in piece.blocks() {
-            if x >= 0 && x < 4 && y >= 0 && y < 4 {
+            if (0..4).contains(&x) && (0..4).contains(&y) {
                 grid[y as usize][x as usize] = true;
             }
         }
     }
 
     let mut lines = Vec::with_capacity(4);
-    for y in 0..4 {
+    for row in &grid {
         let mut spans = Vec::with_capacity(4);
-        for x in 0..4 {
-            if grid[y][x] {
+        for &cell in row {
+            if cell {
                 spans.push(Span::styled(
                     "░░",
                     Style::default().fg(color).add_modifier(Modifier::DIM),
@@ -1283,14 +1284,14 @@ fn render_next(frame: &mut Frame, area: Rect, state: &GameState) {
     let pad = ((inner_w_chars - preview_w_chars).max(0) / 2) as usize;
 
     let mut lines: Vec<Line> = Vec::with_capacity(inner_h);
-    for y in 0..inner_h {
+    for row in grid.iter().take(inner_h) {
         let mut spans: Vec<Span> = Vec::new();
         if pad > 0 {
             spans.push(Span::raw(" ".repeat(pad)));
         }
-        for x in 0..preview_w {
-            if let Some(kind) = grid[y][x] {
-                spans.push(Span::styled("██", Style::default().fg(piece_color(kind))));
+        for cell in row.iter().take(preview_w) {
+            if let Some(kind) = cell {
+                spans.push(Span::styled("██", Style::default().fg(piece_color(*kind))));
             } else {
                 spans.push(Span::raw("  "));
             }
@@ -1314,17 +1315,17 @@ fn piece_preview_lines(kind: Option<PieceType>) -> Vec<Line<'static>> {
             y: 0,
         };
         for (x, y) in piece.blocks() {
-            if x >= 0 && x < 4 && y >= 0 && y < 4 {
+            if (0..4).contains(&x) && (0..4).contains(&y) {
                 grid[y as usize][x as usize] = true;
             }
         }
     }
 
     let mut lines = Vec::with_capacity(4);
-    for y in 0..4 {
+    for row in &grid {
         let mut spans = Vec::with_capacity(4);
-        for x in 0..4 {
-            if grid[y][x] {
+        for &cell in row {
+            if cell {
                 spans.push(Span::styled("██", Style::default().fg(color)));
             } else {
                 spans.push(Span::raw("  "));

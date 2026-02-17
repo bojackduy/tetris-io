@@ -34,11 +34,11 @@ impl Arena {
                 _ => None,
             })
             .collect();
-        if !outgoing.is_empty() {
-            if let Some(target) = self.pick_target(idx) {
-                for lines in outgoing {
-                    self.players[target].receive_garbage(lines);
-                }
+        if !outgoing.is_empty()
+            && let Some(target) = self.pick_target(idx)
+        {
+            for lines in outgoing {
+                self.players[target].receive_garbage(lines);
             }
         }
         events

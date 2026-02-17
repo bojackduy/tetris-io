@@ -107,12 +107,12 @@ fn read_loop(stream: TcpStream, tx: mpsc::Sender<NetMessage>) {
 
 fn parse_message(line: &str) -> Option<NetMessage> {
     let trimmed = line.trim();
-    if trimmed.starts_with("START ") {
-        let seed = trimmed[6..].trim().parse().ok()?;
+    if let Some(rest) = trimmed.strip_prefix("START ") {
+        let seed = rest.trim().parse().ok()?;
         return Some(NetMessage::Start(seed));
     }
-    if trimmed.starts_with("G ") {
-        let lines = trimmed[2..].trim().parse().ok()?;
+    if let Some(rest) = trimmed.strip_prefix("G ") {
+        let lines = rest.trim().parse().ok()?;
         return Some(NetMessage::Garbage(lines));
     }
     if trimmed == "READY" {

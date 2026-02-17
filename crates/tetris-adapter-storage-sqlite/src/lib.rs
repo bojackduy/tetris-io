@@ -242,5 +242,5 @@ fn now_epoch_secs() -> u64 {
 }
 
 fn to_io_err(err: rusqlite::Error) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, err.to_string())
+    io::Error::other(err.to_string())
 }

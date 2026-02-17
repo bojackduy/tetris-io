@@ -10,4 +10,4 @@ keywords = ["tetris", "storage", "sqlite", "persistence"]
 categories = ["games", "database"]
 
 [dependencies]
-rusqlite = "0.31"
+rusqlite = { version = "0.31", features = ["bundled"] }

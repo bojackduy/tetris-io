@@ -227,29 +227,27 @@ pub fn run() -> io::Result<()> {
             } = state;
             match screen {
                 Screen::Playing => {
-                    if let CrosstermEvent::Key(key) = ev {
-                        if matches!(key.kind, KeyEventKind::Press)
-                            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
-                        {
-                            session.pause(now);
-                            session.input.clear_motion();
-                            *screen = Screen::Paused { selected: 0 };
-                            continue;
-                        }
+                    if let CrosstermEvent::Key(key) = ev
+                        && matches!(key.kind, KeyEventKind::Press)
+                        && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+                    {
+                        session.pause(now);
+                        session.input.clear_motion();
+                        *screen = Screen::Paused { selected: 0 };
+                        continue;
                     }
                     session.input.handle_event(ev, now, &mut commands);
                 }
                 Screen::NetPlaying => {
                     if let Some(net) = net_session.as_mut() {
-                        if let CrosstermEvent::Key(key) = ev {
-                            if matches!(key.kind, KeyEventKind::Press)
-                                && matches!(key.code, KeyCode::Esc)
-                            {
-                                net.input.clear_motion();
-                                *net_session = None;
-                                *screen = Screen::Menu { selected: 0 };
-                                continue;
-                            }
+                        if let CrosstermEvent::Key(key) = ev
+                            && matches!(key.kind, KeyEventKind::Press)
+                            && matches!(key.code, KeyCode::Esc)
+                        {
+                            net.input.clear_motion();
+                            *net_session = None;
+                            *screen = Screen::Menu { selected: 0 };
+                            continue;
                         }
                         net.input.handle_event(ev, now, &mut commands);
                     }
@@ -363,88 +361,86 @@ pub fn run() -> io::Result<()> {
                     }
                 }
                 Screen::NameEntry => {
-                    if let CrosstermEvent::Key(key) = ev {
-                        if matches!(key.kind, KeyEventKind::Press) {
-                            match reduce_name_entry_input(name_input, to_ui_key(key.code), 12) {
-                                NameEntryIntent::None => {}
-                                NameEntryIntent::SaveDefault => {
-                                    if let Some(score) = pending_score.take() {
-                                        let entry = HighScore {
-                                            name: "Player".to_string(),
-                                            score: score.score,
-                                            lines: score.lines,
-                                            time_secs: score.time_secs,
-                                            mode: score.mode,
-                                        };
-                                        let _ = storage.insert_high_score(&entry);
-                                        *high_scores =
-                                            storage.fetch_high_scores(10).unwrap_or_default();
-                                    }
-                                    name_input.clear();
-                                    *screen = Screen::GameOver { selected: 0 };
+                    if let CrosstermEvent::Key(key) = ev
+                        && matches!(key.kind, KeyEventKind::Press)
+                    {
+                        match reduce_name_entry_input(name_input, to_ui_key(key.code), 12) {
+                            NameEntryIntent::None => {}
+                            NameEntryIntent::SaveDefault => {
+                                if let Some(score) = pending_score.take() {
+                                    let entry = HighScore {
+                                        name: "Player".to_string(),
+                                        score: score.score,
+                                        lines: score.lines,
+                                        time_secs: score.time_secs,
+                                        mode: score.mode,
+                                    };
+                                    let _ = storage.insert_high_score(&entry);
+                                    *high_scores =
+                                        storage.fetch_high_scores(10).unwrap_or_default();
                                 }
-                                NameEntryIntent::Save => {
-                                    if let Some(score) = pending_score.take() {
-                                        let entry = HighScore {
-                                            name: resolve_player_name(name_input),
-                                            score: score.score,
-                                            lines: score.lines,
-                                            time_secs: score.time_secs,
-                                            mode: score.mode,
-                                        };
-                                        let _ = storage.insert_high_score(&entry);
-                                        *high_scores =
-                                            storage.fetch_high_scores(10).unwrap_or_default();
-                                    }
-                                    name_input.clear();
-                                    *screen = Screen::GameOver { selected: 0 };
+                                name_input.clear();
+                                *screen = Screen::GameOver { selected: 0 };
+                            }
+                            NameEntryIntent::Save => {
+                                if let Some(score) = pending_score.take() {
+                                    let entry = HighScore {
+                                        name: resolve_player_name(name_input),
+                                        score: score.score,
+                                        lines: score.lines,
+                                        time_secs: score.time_secs,
+                                        mode: score.mode,
+                                    };
+                                    let _ = storage.insert_high_score(&entry);
+                                    *high_scores =
+                                        storage.fetch_high_scores(10).unwrap_or_default();
                                 }
+                                name_input.clear();
+                                *screen = Screen::GameOver { selected: 0 };
                             }
                         }
                     }
                 }
                 Screen::HighScores => {
-                    if let CrosstermEvent::Key(key) = ev {
-                        if matches!(key.kind, KeyEventKind::Press)
-                            && reduce_simple_back_input(to_ui_key(key.code))
-                        {
-                            *screen = Screen::Menu { selected: 0 };
-                        }
+                    if let CrosstermEvent::Key(key) = ev
+                        && matches!(key.kind, KeyEventKind::Press)
+                        && reduce_simple_back_input(to_ui_key(key.code))
+                    {
+                        *screen = Screen::Menu { selected: 0 };
                     }
                 }
                 Screen::NetHostWait => {
-                    if let CrosstermEvent::Key(key) = ev {
-                        if matches!(key.kind, KeyEventKind::Press)
-                            && reduce_cancel_input(to_ui_key(key.code))
-                        {
-                            *net_lobby = None;
-                            *net_host_pending = None;
-                            *screen = Screen::Menu { selected: 0 };
-                        }
+                    if let CrosstermEvent::Key(key) = ev
+                        && matches!(key.kind, KeyEventKind::Press)
+                        && reduce_cancel_input(to_ui_key(key.code))
+                    {
+                        *net_lobby = None;
+                        *net_host_pending = None;
+                        *screen = Screen::Menu { selected: 0 };
                     }
                 }
                 Screen::NetJoinInput => {
-                    if let CrosstermEvent::Key(key) = ev {
-                        if matches!(key.kind, KeyEventKind::Press) {
-                            match reduce_join_input(join_input, join_error, to_ui_key(key.code)) {
-                                JoinInputIntent::None => {}
-                                JoinInputIntent::BackToMenu => {
-                                    *screen = Screen::Menu { selected: 0 };
-                                }
-                                JoinInputIntent::Connect => {
-                                    match NetClient::connect(join_input.trim()) {
-                                        Ok(mut client) => match client.send_ready() {
-                                            Ok(()) => {
-                                                *net_pending = Some(client);
-                                                *screen = Screen::NetJoinWait;
-                                            }
-                                            Err(err) => {
-                                                *join_error = Some(format!("Ready error: {}", err));
-                                            }
-                                        },
-                                        Err(err) => {
-                                            *join_error = Some(format!("Connect error: {}", err));
+                    if let CrosstermEvent::Key(key) = ev
+                        && matches!(key.kind, KeyEventKind::Press)
+                    {
+                        match reduce_join_input(join_input, join_error, to_ui_key(key.code)) {
+                            JoinInputIntent::None => {}
+                            JoinInputIntent::BackToMenu => {
+                                *screen = Screen::Menu { selected: 0 };
+                            }
+                            JoinInputIntent::Connect => {
+                                match NetClient::connect(join_input.trim()) {
+                                    Ok(mut client) => match client.send_ready() {
+                                        Ok(()) => {
+                                            *net_pending = Some(client);
+                                            *screen = Screen::NetJoinWait;
                                         }
+                                        Err(err) => {
+                                            *join_error = Some(format!("Ready error: {}", err));
+                                        }
+                                    },
+                                    Err(err) => {
+                                        *join_error = Some(format!("Connect error: {}", err));
                                     }
                                 }
                             }
@@ -452,13 +448,12 @@ pub fn run() -> io::Result<()> {
                     }
                 }
                 Screen::NetJoinWait => {
-                    if let CrosstermEvent::Key(key) = ev {
-                        if matches!(key.kind, KeyEventKind::Press)
-                            && reduce_cancel_input(to_ui_key(key.code))
-                        {
-                            *net_pending = None;
-                            *screen = Screen::Menu { selected: 0 };
-                        }
+                    if let CrosstermEvent::Key(key) = ev
+                        && matches!(key.kind, KeyEventKind::Press)
+                        && reduce_cancel_input(to_ui_key(key.code))
+                    {
+                        *net_pending = None;
+                        *screen = Screen::Menu { selected: 0 };
                     }
                 }
                 Screen::NetOver { selected, .. } => {
@@ -555,13 +550,12 @@ pub fn run() -> io::Result<()> {
         }
 
         if matches!(app.screen, Screen::NetHostWait) {
-            if app.net_host_pending.is_none() {
-                if let Some(lobby) = app.net_lobby.as_ref() {
-                    if let Some(stream) = lobby.try_accept()? {
-                        let client = NetClient::from_stream(stream)?;
-                        app.net_host_pending = Some(NetPending { client, since: now });
-                    }
-                }
+            if app.net_host_pending.is_none()
+                && let Some(lobby) = app.net_lobby.as_ref()
+                && let Some(stream) = lobby.try_accept()?
+            {
+                let client = NetClient::from_stream(stream)?;
+                app.net_host_pending = Some(NetPending { client, since: now });
             }
 
             let mut ready = false;
@@ -586,14 +580,12 @@ pub fn run() -> io::Result<()> {
 
             if disconnected || timed_out {
                 app.net_host_pending = None;
-            } else if ready {
-                if let Some(mut pending) = app.net_host_pending.take() {
-                    let seed = random_seed();
-                    let _ = pending.client.send_start(seed);
-                    app.net_session = Some(NetSession::new(&app.config, seed, pending.client));
-                    app.net_lobby = None;
-                    app.screen = Screen::NetPlaying;
-                }
+            } else if ready && let Some(mut pending) = app.net_host_pending.take() {
+                let seed = random_seed();
+                let _ = pending.client.send_start(seed);
+                app.net_session = Some(NetSession::new(&app.config, seed, pending.client));
+                app.net_lobby = None;
+                app.screen = Screen::NetPlaying;
             }
         }
 
@@ -618,12 +610,12 @@ pub fn run() -> io::Result<()> {
                 app.net_pending = None;
                 app.join_error = Some("Disconnected before start".to_string());
                 app.screen = Screen::NetJoinInput;
-            } else if let Some(start_seed) = seed {
-                if let Some(pending) = app.net_pending.take() {
-                    app.net_session = Some(NetSession::new(&app.config, start_seed, pending));
-                    app.join_error = None;
-                    app.screen = Screen::NetPlaying;
-                }
+            } else if let Some(start_seed) = seed
+                && let Some(pending) = app.net_pending.take()
+            {
+                app.net_session = Some(NetSession::new(&app.config, start_seed, pending));
+                app.join_error = None;
+                app.screen = Screen::NetPlaying;
             }
         }
 
@@ -964,7 +956,7 @@ fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
     let delta = direction as i64;
     match item {
         SettingItem::Das => config.das_ms = clamp_u64(config.das_ms, delta * 5, 0, 1000),
-        SettingItem::Arr => config.arr_ms = clamp_u64(config.arr_ms, delta * 1, 0, 200),
+        SettingItem::Arr => config.arr_ms = clamp_u64(config.arr_ms, delta, 0, 200),
         SettingItem::Dcd => config.dcd_ms = clamp_u64(config.dcd_ms, delta * 5, 0, 500),
         _ => {}
     }

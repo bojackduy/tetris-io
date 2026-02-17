@@ -15,12 +15,18 @@ pub struct Board {
     garbage: [[bool; BOARD_WIDTH]; BOARD_HEIGHT],
 }
 
-impl Board {
-    pub fn new() -> Self {
+impl Default for Board {
+    fn default() -> Self {
         Self {
             cells: [[None; BOARD_WIDTH]; BOARD_HEIGHT],
             garbage: [[false; BOARD_WIDTH]; BOARD_HEIGHT],
         }
+    }
+}
+
+impl Board {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn get(&self, x: i32, y: i32) -> Cell {
@@ -37,11 +43,7 @@ impl Board {
         let yi = y as usize;
         let xi = x as usize;
         self.cells[yi][xi] = cell;
-        if cell.is_none() {
-            self.garbage[yi][xi] = false;
-        } else {
-            self.garbage[yi][xi] = false;
-        }
+        self.garbage[yi][xi] = false;
     }
 
     pub fn set_garbage(&mut self, x: i32, y: i32, cell: Cell) {
@@ -98,10 +100,9 @@ impl Board {
 
         let mut next = [[None; BOARD_WIDTH]; BOARD_HEIGHT];
         let mut next_garbage = [[false; BOARD_WIDTH]; BOARD_HEIGHT];
-        for y in 0..(BOARD_HEIGHT - l) {
-            next[y] = self.cells[y + l];
-            next_garbage[y] = self.garbage[y + l];
-        }
+        next[..(BOARD_HEIGHT - l)].copy_from_slice(&self.cells[l..(BOARD_HEIGHT - l) + l]);
+        next_garbage[..(BOARD_HEIGHT - l)]
+            .copy_from_slice(&self.garbage[l..(BOARD_HEIGHT - l) + l]);
         for i in 0..l {
             let row = BOARD_HEIGHT - l + i;
             let hole = holes.get(i).copied().unwrap_or(0) % BOARD_WIDTH;

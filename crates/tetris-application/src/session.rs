@@ -82,30 +82,30 @@ impl GameSessionState {
     }
 
     pub fn apply_mode_end_if_reached(&mut self, now: Instant) -> Option<SessionEnd> {
-        if let Some(limit) = self.mode.time_limit_secs() {
-            if self.elapsed_secs(now) >= limit {
-                self.game_over_time = Some(limit);
-                self.time_up = true;
-                self.state.game_over = true;
-                return Some(SessionEnd::TimeUp);
-            }
+        if let Some(limit) = self.mode.time_limit_secs()
+            && self.elapsed_secs(now) >= limit
+        {
+            self.game_over_time = Some(limit);
+            self.time_up = true;
+            self.state.game_over = true;
+            return Some(SessionEnd::TimeUp);
         }
 
-        if let GameMode::FortyLines { target } = self.mode {
-            if self.state.lines >= target {
-                self.game_over_time = Some(self.elapsed_secs(now));
-                self.time_up = true;
-                self.state.game_over = true;
-                return Some(SessionEnd::GoalReached);
-            }
+        if let GameMode::FortyLines { target } = self.mode
+            && self.state.lines >= target
+        {
+            self.game_over_time = Some(self.elapsed_secs(now));
+            self.time_up = true;
+            self.state.game_over = true;
+            return Some(SessionEnd::GoalReached);
         }
 
-        if let GameMode::Cheese { .. } = self.mode {
-            if self.state.garbage_remaining == 0 {
-                self.game_over_time = Some(self.elapsed_secs(now));
-                self.state.game_over = true;
-                return Some(SessionEnd::GoalReached);
-            }
+        if let GameMode::Cheese { .. } = self.mode
+            && self.state.garbage_remaining == 0
+        {
+            self.game_over_time = Some(self.elapsed_secs(now));
+            self.state.game_over = true;
+            return Some(SessionEnd::GoalReached);
         }
 
         None

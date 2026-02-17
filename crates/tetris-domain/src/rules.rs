@@ -253,12 +253,10 @@ fn lock_piece(state: &mut GameState, events: &mut Vec<Event>) {
         }
     }
 
-    if state.pending_garbage() > 0 {
-        if state.apply_pending_garbage() {
-            state.game_over = true;
-            events.push(Event::GameOver);
-            return;
-        }
+    if state.pending_garbage() > 0 && state.apply_pending_garbage() {
+        state.game_over = true;
+        events.push(Event::GameOver);
+        return;
     }
 
     state.pieces_placed = state.pieces_placed.saturating_add(1);
