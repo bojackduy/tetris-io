@@ -59,6 +59,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Create artifact
+        shell: bash
         run: |
           mkdir -p dist
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
