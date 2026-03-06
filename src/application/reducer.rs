@@ -1,7 +1,7 @@
 use super::flow::{
-    adjust_blitz_duration, adjust_cheese_target, adjust_forty_lines_target, move_selection,
     GameMode, MENU_BLITZ, MENU_CHEESE, MENU_FORTY_LINES, MENU_HOST, MENU_ITEMS, MENU_JOIN,
-    MENU_NEW_GAME, MENU_SCORES, MENU_SETTINGS,
+    MENU_NEW_GAME, MENU_SCORES, MENU_SETTINGS, adjust_blitz_duration, adjust_cheese_target,
+    adjust_forty_lines_target, move_selection,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,7 +312,7 @@ pub fn reduce_join_input(
 #[cfg(test)]
 mod tests {
     use super::super::flow::{
-        SettingItem, BLITZ_DEFAULT_SECS, CHEESE_DEFAULT_TARGET, FORTY_LINES_DEFAULT_TARGET,
+        BLITZ_DEFAULT_SECS, CHEESE_DEFAULT_TARGET, FORTY_LINES_DEFAULT_TARGET, SettingItem,
     };
     use super::*;
 

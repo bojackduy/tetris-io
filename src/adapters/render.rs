@@ -1,12 +1,12 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
-use crate::adapters::input::{keycode_label, KeyBindings};
+use crate::adapters::input::{KeyBindings, keycode_label};
 use crate::domain::{
     board::{BOARD_WIDTH, VISIBLE_HEIGHT, VISIBLE_START_Y},
     piece::{Piece, PieceType},

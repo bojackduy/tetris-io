@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::domain::command::Command;
 use crate::domain::events::Event;
-use crate::domain::rules::{step, RulesConfig};
+use crate::domain::rules::{RulesConfig, step};
 use crate::domain::state::GameState;
 use crate::domain::timing::clamp_dt_ms;
 

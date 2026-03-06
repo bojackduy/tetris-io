@@ -1,4 +1,4 @@
-use super::board::{Board, BOARD_HEIGHT, BOARD_WIDTH};
+use super::board::{BOARD_HEIGHT, BOARD_WIDTH, Board};
 use super::command::Command;
 use super::events::Event;
 use super::garbage::RoundingMode;

@@ -2,6 +2,16 @@ use std::io;
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
+use crate::adapters::input::{InputConfig, InputState, KeyBindings, keycode_label};
+use crate::adapters::net::{NetClient, NetLobby, NetMessage};
+use crate::adapters::render::{
+    RenderContext, render_game, render_game_over, render_game_over_custom, render_info_screen,
+    render_menu, render_pause, render_settings,
+};
+use crate::domain::command::Command;
+use crate::domain::events::Event as GameEvent;
+use crate::domain::rng::random_seed;
+use crate::domain::rules::RulesConfig;
 use crossterm::ExecutableCommand;
 use crossterm::event::{
     self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyboardEnhancementFlags,
@@ -12,16 +22,6 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use crate::adapters::net::{NetClient, NetLobby, NetMessage};
-use crate::adapters::input::{InputConfig, InputState, KeyBindings, keycode_label};
-use crate::adapters::render::{
-    RenderContext, render_game, render_game_over, render_game_over_custom, render_info_screen,
-    render_menu, render_pause, render_settings,
-};
-use crate::domain::command::Command;
-use crate::domain::events::Event as GameEvent;
-use crate::domain::rng::random_seed;
-use crate::domain::rules::RulesConfig;
 
 use crate::app::config::AppConfig;
 use crate::app::storage::{HighScore, Storage};

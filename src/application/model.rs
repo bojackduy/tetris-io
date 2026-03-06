@@ -1,4 +1,4 @@
-use super::flow::{Screen, BLITZ_DEFAULT_SECS, CHEESE_DEFAULT_TARGET, FORTY_LINES_DEFAULT_TARGET};
+use super::flow::{BLITZ_DEFAULT_SECS, CHEESE_DEFAULT_TARGET, FORTY_LINES_DEFAULT_TARGET, Screen};
 
 #[derive(Debug, Clone)]
 pub struct PendingScore {

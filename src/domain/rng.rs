@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 
 use super::piece::PieceType;
 

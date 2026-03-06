@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use super::board::{Board, BOARD_HEIGHT, BOARD_WIDTH, PLAY_HEIGHT};
+use super::board::{BOARD_HEIGHT, BOARD_WIDTH, Board, PLAY_HEIGHT};
 use super::garbage::{GarbageChunk, GarbageConfig, GarbageQueue};
 use super::piece::{Piece, PieceType, Rotation};
 use super::rng::{BagRng, PieceRng};

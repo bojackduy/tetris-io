@@ -1,7 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use crate::adapters::input::{keycode_from_storage, keycode_to_storage, KeyBindings};
+use crate::adapters::input::{KeyBindings, keycode_from_storage, keycode_to_storage};
 use crate::adapters::storage::{HighScoreEntry, SqliteStorage, StoredConfig};
 use crate::application::ports::{ConfigPort, HighScorePort};
 
