@@ -33,29 +33,44 @@ This is a modern Tetris implementation featuring a clean, deterministic core eng
 ## Architecture
 
 ```
-crates/
-  tetris-domain/                  # Pure deterministic game engine
-  tetris-application/             # App flow/reducers/session/gameplay services
-  tetris-adapter-tui/             # Ratatui + crossterm adapter
-  tetris-adapter-net-tcp/         # TCP networking adapter
-  tetris-adapter-storage-sqlite/  # SQLite storage adapter
-  tetris-bin/                     # Composition root and executable entrypoint
-
-src/
-  app/                            # Runtime orchestration glue for current app wiring
-  lib.rs                          # Root library exports used by tetris-bin
+tetris-io/                           # Root crate (Cargo.toml at project root)
+└── src/
+    ├── domain/                      # Pure deterministic game engine
+    │   ├── board.rs                 # Board representation and operations
+    │   ├── piece.rs                 # Piece definitions and rotations
+    │   ├── rules.rs                 # Game rules, scoring, SRS rotation
+    │   ├── state.rs                 # Game state management
+    │   ├── garbage.rs               # Garbage handling for multiplayer
+    │   ├── rng.rs                   # Deterministic 7-bag RNG
+    │   └── timing.rs                # DAS/ARR timing constants
+    ├── application/                 # App flow/reducers/session/services
+    │   ├── flow.rs                  # Game flow state machine
+    │   ├── reducer.rs               # State reducer functions
+    │   ├── session.rs               # Session management
+    │   └── gameplay.rs              # Gameplay service layer
+    ├── adapters/                    # External adapters
+    │   ├── render.rs               # Ratatui rendering adapter
+    │   ├── input.rs                # Crossterm input handling
+    │   ├── net.rs                  # TCP networking adapter
+    │   └── storage.rs              # SQLite storage adapter
+    ├── app/                         # Runtime orchestration
+    │   ├── loop.rs                 # Main game loop
+    │   ├── config.rs               # Configuration management
+    │   └── storage.rs              # App-level storage glue
+    ├── lib.rs                       # Root library exports
+    └── main.rs                      # Executable entrypoint
 ```
 
 ## Building
 
 ```bash
-cargo build -p tetris-bin --release
+cargo build --release
 ```
 
 ## Running
 
 ```bash
-cargo run -p tetris-bin --release
+cargo run --release
 ```
 
 ## Dependencies
