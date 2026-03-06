@@ -32,10 +32,10 @@ distribute:
       version: "{{projectVersion}}"
       npmFile: dist/{{artifactFile}}
       linux:
-        x86_64: tetris-io-{{projectVersion}}-linux-x86_64.zip
-        aarch64: tetris-io-{{projectVersion}}-linux-aarch64.zip
+        x86_64: tetris-io-linux-x86_64.tar.gz
+        aarch64: tetris-io-linux-aarch64.tar.gz
       mac:
-        x86_64: tetris-io-{{projectVersion}}-darwin-x86_64.zip
-        aarch64: tetris-io-{{projectVersion}}-darwin-aarch64.zip
+        x86_64: tetris-io-osx-x86_64.tar.gz
+        aarch64: tetris-io-osx-aarch64.tar.gz
       windows:
-        x86_64: tetris-io-{{projectVersion}}-windows-x86_64.zip
+        x86_64: tetris-io-windows-x86_64.zip
