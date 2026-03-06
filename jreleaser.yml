@@ -1,0 +1,41 @@
+project:
+  name: tetris-io
+  version: 1.0.0
+  description: Terminal-based Tetris game
+  longDescription: |
+    A modern Tetris implementation in Rust featuring SRS rotation,
+    multiple game modes, and a clean terminal UI.
+  license: MIT
+  links:
+    homepage: https://github.com/Duyyy123/tetris-io
+
+release:
+  github:
+    owner: Duuyyy123
+    name: tetris-io
+    overwrite: true
+
+assemble:
+  archive:
+    tetris-io:
+      type: tar
+      formats:
+        - zip
+      executable:
+        path: target/release/tetris-io
+
+distribute:
+  npm:
+    tetris-io:
+      packageName: "@bojackduy/tetris-io"
+      nodeLabel: node
+      version: "{{projectVersion}}"
+      npmFile: dist/{{artifactFile}}
+      linux:
+        x86_64: tetris-io-{{projectVersion}}-linux-x86_64.zip
+        aarch64: tetris-io-{{projectVersion}}-linux-aarch64.zip
+      mac:
+        x86_64: tetris-io-{{projectVersion}}-darwin-x86_64.zip
+        aarch64: tetris-io-{{projectVersion}}-darwin-aarch64.zip
+      windows:
+        x86_64: tetris-io-{{projectVersion}}-windows-x86_64.zip
