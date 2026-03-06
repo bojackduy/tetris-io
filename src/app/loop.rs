@@ -12,36 +12,36 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use tetris_adapter_net_tcp::{NetClient, NetLobby, NetMessage};
-use tetris_adapter_tui::input::{InputConfig, InputState, KeyBindings, keycode_label};
-use tetris_adapter_tui::render::{
+use crate::adapters::net::{NetClient, NetLobby, NetMessage};
+use crate::adapters::input::{InputConfig, InputState, KeyBindings, keycode_label};
+use crate::adapters::render::{
     RenderContext, render_game, render_game_over, render_game_over_custom, render_info_screen,
     render_menu, render_pause, render_settings,
 };
-use tetris_domain::command::Command;
-use tetris_domain::events::Event as GameEvent;
-use tetris_domain::rng::random_seed;
-use tetris_domain::rules::RulesConfig;
+use crate::domain::command::Command;
+use crate::domain::events::Event as GameEvent;
+use crate::domain::rng::random_seed;
+use crate::domain::rules::RulesConfig;
 
 use crate::app::config::AppConfig;
 use crate::app::storage::{HighScore, Storage};
-use tetris_application::flow::{
+use crate::application::flow::{
     GAME_OVER_ITEMS, GameMode, MENU_BLITZ, MENU_CHEESE, MENU_FORTY_LINES,
     NET_HANDSHAKE_TIMEOUT_SECS, NET_OVER_ITEMS, NetOutcome, PAUSE_ITEMS, SETTINGS_ITEMS, Screen,
     SettingItem, clamp_u64, format_time_mmss, menu_items,
 };
-use tetris_application::gameplay::{
+use crate::application::gameplay::{
     SinglePlayerStep, advance_sim_state, advance_single_player, compute_net_outcome, frame_dt_ms,
 };
-use tetris_application::model::AppState;
-use tetris_application::reducer::{
+use crate::application::model::AppState;
+use crate::application::reducer::{
     GameOverIntent, JoinInputIntent, MenuIntent, NameEntryIntent, NetOverIntent, PauseIntent,
     SettingsIntent, UiKey, reduce_cancel_input, reduce_game_over_input, reduce_join_input,
     reduce_menu_input, reduce_name_entry_input, reduce_net_over_input, reduce_paused_input,
     reduce_settings_input, reduce_simple_back_input,
 };
-use tetris_application::service::{build_pending_score, resolve_player_name};
-use tetris_application::session::{GameSessionState, NetSessionState};
+use crate::application::service::{build_pending_score, resolve_player_name};
+use crate::application::session::{GameSessionState, NetSessionState};
 
 struct GameSession {
     session: GameSessionState,

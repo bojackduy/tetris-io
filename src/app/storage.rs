@@ -1,9 +1,9 @@
 use std::io;
 use std::path::PathBuf;
 
-use tetris_adapter_storage_sqlite::{HighScoreEntry, SqliteStorage, StoredConfig};
-use tetris_adapter_tui::input::{KeyBindings, keycode_from_storage, keycode_to_storage};
-use tetris_application::ports::{ConfigPort, HighScorePort};
+use crate::adapters::input::{keycode_from_storage, keycode_to_storage, KeyBindings};
+use crate::adapters::storage::{HighScoreEntry, SqliteStorage, StoredConfig};
+use crate::application::ports::{ConfigPort, HighScorePort};
 
 use crate::app::config::AppConfig;
 

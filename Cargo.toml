@@ -1,28 +1,11 @@
-[workspace]
-members = [
-    "crates/tetris-domain",
-    "crates/tetris-application",
-    "crates/tetris-adapter-net-tcp",
-    "crates/tetris-adapter-tui",
-    "crates/tetris-adapter-storage-sqlite",
-    "crates/tetris-bin",
-]
-
-[workspace.package]
+[package]
+name = "tetris"
+description = "Terminal-based Tetris game built with Ratatui and Crossterm"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Duyyy123/tetris-io"
 authors = ["Duyyy123"]
-
-[package]
-name = "rust-ratatui"
-description = "Terminal-based Tetris game built with Ratatui and Crossterm — core library"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
 keywords = ["tetris", "terminal", "tui", "ratatui", "game"]
 categories = ["games", "command-line-interface"]
 
@@ -30,8 +13,4 @@ categories = ["games", "command-line-interface"]
 ratatui = "0.26"
 crossterm = "0.27"
 rand = "0.8"
-tetris-adapter-net-tcp = { path = "crates/tetris-adapter-net-tcp", version = "0.1.0" }
-tetris-adapter-storage-sqlite = { path = "crates/tetris-adapter-storage-sqlite", version = "0.1.0" }
-tetris-adapter-tui = { path = "crates/tetris-adapter-tui", version = "0.1.0" }
-tetris-application = { path = "crates/tetris-application", version = "0.1.0" }
-tetris-domain = { path = "crates/tetris-domain", version = "0.1.0" }
+rusqlite = { version = "0.31", features = ["bundled"] }
