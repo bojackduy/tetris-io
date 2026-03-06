@@ -6,6 +6,10 @@ A terminal-based Tetris game written in Rust using the [Ratatui](https://ratatui
 
 This is a modern Tetris implementation featuring a clean, deterministic core engine with a thin terminal UI layer. The architecture is designed to be extensible, allowing future competitive features like SRS rotation, scoring systems, combos, and multiplayer support.
 
+## Demo
+
+![Tetris Demo](./output.gif)
+
 ## Features
 
 - **Classic Tetris gameplay** in the terminal
