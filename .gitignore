@@ -1,2 +1,3 @@
 target/
 tetris.db
+/Cargo.lock
