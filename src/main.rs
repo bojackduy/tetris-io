@@ -1,3 +1,3 @@
 fn main() -> std::io::Result<()> {
-    tetris::app::r#loop::run()
+    tetris_io::app::r#loop::run()
 }
