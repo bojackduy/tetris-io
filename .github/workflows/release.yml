@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -89,45 +92,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
-
-      - name: Install JReleaser
-        run: |
-          wget -q https://github.com/jreleaser/jreleaser/releases/download/1.17.0/jreleaser-1.17.0.zip -O /tmp/jreleaser.zip
-          unzip -q /tmp/jreleaser.zip -d /tmp
-          echo "/tmp/jreleaser/bin" >> $GITHUB_PATH
+          merge-multiple: true
 
       - name: Set version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
       - name: Run JReleaser full-release
-        run: jreleaser full-release -PartifactsDir=dist -PskipArchiveResolver
+        uses: jreleaser/release-action@v2
+        with:
+          arguments: full-release -PartifactsDir=dist -PskipArchiveResolver
         env:
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JRELEASER_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  publish-npm:
-    needs: release
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Publish to npm
-        run: |
-          npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}
-
-          for dir in dist/*/; do
-            platform=$(basename "$dir")
-            cd "$dir"
-            
-            npm publish --access public --dry-run || true
-            cd ../..
-          done

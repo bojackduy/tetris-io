@@ -6,36 +6,29 @@ project:
     A modern Tetris implementation in Rust featuring SRS rotation,
     multiple game modes, and a clean terminal UI.
   license: MIT
+  authors:
+    - Duyyyy123
+  copyright: Copyright (c) 2026 Duyyyy123
   links:
     homepage: https://github.com/Duyyy123/tetris-io
 
 release:
   github:
-    owner: Duuyyy123
+    owner: Duyyy123
     name: tetris-io
     overwrite: true
 
-assemble:
-  archive:
-    tetris-io:
-      type: tar
-      formats:
-        - zip
-      executable:
-        path: target/release/tetris-io
-
-distribute:
-  npm:
-    tetris-io:
-      packageName: "@bojackduy/tetris-io"
-      nodeLabel: node
-      version: "{{projectVersion}}"
-      npmFile: dist/{{artifactFile}}
-      linux:
-        x86_64: tetris-io-linux-x86_64.tar.gz
-        aarch64: tetris-io-linux-aarch64.tar.gz
-      mac:
-        x86_64: tetris-io-osx-x86_64.tar.gz
-        aarch64: tetris-io-osx-aarch64.tar.gz
-      windows:
-        x86_64: tetris-io-windows-x86_64.zip
+distributions:
+  tetris-io:
+    type: BINARY
+    artifacts:
+      - path: dist/tetris-io-linux-x86_64.tar.gz
+        platform: linux-x86_64
+      - path: dist/tetris-io-linux-aarch64.tar.gz
+        platform: linux-aarch_64
+      - path: dist/tetris-io-osx-x86_64.tar.gz
+        platform: osx-x86_64
+      - path: dist/tetris-io-osx-aarch64.tar.gz
+        platform: osx-aarch_64
+      - path: dist/tetris-io-windows-x86_64.zip
+        platform: windows-x86_64
