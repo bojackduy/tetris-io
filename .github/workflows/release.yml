@@ -108,6 +108,7 @@ jobs:
   publish-npm:
     needs: release
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - uses: actions/checkout@v4
@@ -119,13 +120,7 @@ jobs:
           merge-multiple: true
 
       - name: Set version
-        run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          else
-            PKGID="$(cargo pkgid)"
-            echo "VERSION=${PKGID##*@}" >> $GITHUB_ENV
-          fi
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
       - name: Setup npm
         uses: actions/setup-node@v4
@@ -133,34 +128,128 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Create npm package
+      - name: Create npm packages
         run: |
-          mkdir -p npm-package
-          
-          cat > npm-package/package.json << EOF
+          set -euo pipefail
+
+          mkdir -p npm-packages
+
+          cat > npm-packages/launcher.js << 'EOF'
+          #!/usr/bin/env node
+          const { spawnSync } = require('node:child_process');
+          const path = require('node:path');
+
+          const map = {
+            'linux:x64': '@bojackduy/tetris-io-linux-x64',
+            'linux:arm64': '@bojackduy/tetris-io-linux-arm64',
+            'darwin:x64': '@bojackduy/tetris-io-darwin-x64',
+            'darwin:arm64': '@bojackduy/tetris-io-darwin-arm64',
+            'win32:x64': '@bojackduy/tetris-io-win32-x64'
+          };
+
+          const key = `${process.platform}:${process.arch}`;
+          const pkg = map[key];
+
+          if (!pkg) {
+            console.error(`Unsupported platform: ${key}`);
+            process.exit(1);
+          }
+
+          let pkgJson;
+          try {
+            pkgJson = require.resolve(`${pkg}/package.json`);
+          } catch {
+            console.error(`Missing platform package ${pkg}. Reinstall package.`);
+            process.exit(1);
+          }
+
+          const binName = process.platform === 'win32' ? 'tetris-io.exe' : 'tetris-io';
+          const binPath = path.join(path.dirname(pkgJson), 'bin', binName);
+          const result = spawnSync(binPath, process.argv.slice(2), { stdio: 'inherit' });
+          process.exit(result.status ?? 1);
+          EOF
+
+          make_platform_pkg() {
+            name="$1"
+            os="$2"
+            cpu="$3"
+            archive="$4"
+            ext="$5"
+
+            dir="npm-packages/${name}"
+            mkdir -p "${dir}/bin"
+
+            if [[ "${ext}" == "zip" ]]; then
+              unzip -qo "dist/${archive}" -d "${dir}/bin"
+            else
+              tar -xzf "dist/${archive}" -C "${dir}/bin"
+            fi
+
+            if [[ "${os}" != "win32" ]]; then
+              chmod +x "${dir}/bin/tetris-io"
+            fi
+
+            cat > "${dir}/package.json" << EOF
+          {
+            "name": "@bojackduy/${name}",
+            "version": "$VERSION",
+            "description": "Platform binary for tetris-io",
+            "license": "MIT",
+            "os": ["${os}"],
+            "cpu": ["${cpu}"],
+            "bin": {
+              "tetris-io": "bin/tetris-io${ext:+${ext/zip/.exe}}"
+            }
+          }
+          EOF
+          }
+
+          make_platform_pkg "tetris-io-linux-x64" "linux" "x64" "tetris-io-linux-x86_64.tar.gz" ""
+          make_platform_pkg "tetris-io-linux-arm64" "linux" "arm64" "tetris-io-linux-aarch64.tar.gz" ""
+          make_platform_pkg "tetris-io-darwin-x64" "darwin" "x64" "tetris-io-osx-x86_64.tar.gz" ""
+          make_platform_pkg "tetris-io-darwin-arm64" "darwin" "arm64" "tetris-io-osx-aarch64.tar.gz" ""
+          make_platform_pkg "tetris-io-win32-x64" "win32" "x64" "tetris-io-windows-x86_64.zip" "zip"
+
+          mkdir -p npm-packages/tetris-io/bin
+          cp npm-packages/launcher.js npm-packages/tetris-io/bin/tetris-io.js
+
+          cat > npm-packages/tetris-io/package.json << EOF
           {
             "name": "@bojackduy/tetris-io",
             "version": "$VERSION",
             "description": "Terminal-based Tetris game",
             "bin": {
-              "tetris-io": "./tetris-io"
+              "tetris-io": "bin/tetris-io.js"
             },
             "repository": {
               "type": "git",
               "url": "https://github.com/Duyyy123/tetris-io"
             },
             "keywords": ["tetris", "game", "cli"],
-            "license": "MIT"
+            "license": "MIT",
+            "optionalDependencies": {
+              "@bojackduy/tetris-io-linux-x64": "$VERSION",
+              "@bojackduy/tetris-io-linux-arm64": "$VERSION",
+              "@bojackduy/tetris-io-darwin-x64": "$VERSION",
+              "@bojackduy/tetris-io-darwin-arm64": "$VERSION",
+              "@bojackduy/tetris-io-win32-x64": "$VERSION"
+            }
           }
           EOF
-          
-          # Extract linux binary
-          tar -xzf dist/tetris-io-linux-x86_64.tar.gz -C npm-package
-          
-          ls -la npm-package/
 
-      - name: Publish to npm
-        working-directory: npm-package
-        run: npm publish --access public
+          chmod +x npm-packages/tetris-io/bin/tetris-io.js
+          find npm-packages -maxdepth 2 -type f -name package.json -print
+
+      - name: Publish platform packages to npm
+        run: |
+          set -euo pipefail
+          for pkg in tetris-io-linux-x64 tetris-io-linux-arm64 tetris-io-darwin-x64 tetris-io-darwin-arm64 tetris-io-win32-x64; do
+            npm publish --access public "npm-packages/${pkg}"
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main npm package
+        run: npm publish --access public npm-packages/tetris-io
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
