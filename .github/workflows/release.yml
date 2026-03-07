@@ -104,4 +104,55 @@ jobs:
           arguments: full-release -PartifactsDir=dist -PskipArchiveResolver
         env:
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          JRELEASER_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-npm:
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      - name: Setup npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Create npm package
+        run: |
+          mkdir -p npm-package
+          
+          cat > npm-package/package.json << 'EOF'
+          {
+            "name": "@bojackduy/tetris-io",
+            "version": "$VERSION",
+            "description": "Terminal-based Tetris game",
+            "bin": {
+              "tetris-io": "./tetris-io"
+            },
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/Duyyy123/tetris-io"
+            },
+            "keywords": ["tetris", "game", "cli"],
+            "license": "MIT"
+          }
+          EOF
+          
+          # Extract linux binary
+          tar -xzf dist/tetris-io-linux-x86_64.tar.gz -C npm-package
+          
+          ls -la npm-package/
+
+      - name: Publish to npm
+        working-directory: npm-package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
