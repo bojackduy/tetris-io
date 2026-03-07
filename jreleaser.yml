@@ -17,6 +17,8 @@ release:
     owner: Duyyy123
     name: tetris-io
     overwrite: true
+    milestone:
+      close: false
 
 distributions:
   tetris-io:
