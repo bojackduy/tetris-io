@@ -244,12 +244,12 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in tetris-io-linux-x64 tetris-io-linux-arm64 tetris-io-darwin-x64 tetris-io-darwin-arm64 tetris-io-win32-x64; do
-            npm publish --access public "npm-packages/${pkg}"
+            npm publish --access public "./npm-packages/${pkg}"
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main npm package
-        run: npm publish --access public npm-packages/tetris-io
+        run: npm publish --access public ./npm-packages/tetris-io
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
