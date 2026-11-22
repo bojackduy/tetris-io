@@ -13,6 +13,7 @@ pub struct GameSessionState {
     pub paused_at: Option<Instant>,
     pub paused_total: Duration,
     pub game_over_time: Option<u64>,
+    pub game_over_ms: Option<u64>,
     pub time_up: bool,
 }
 
@@ -46,18 +47,29 @@ impl GameSessionState {
             paused_at: None,
             paused_total: Duration::from_secs(0),
             game_over_time: None,
+            game_over_ms: None,
             time_up: false,
         }
     }
 
-    pub fn elapsed_secs(&self, now: Instant) -> u64 {
-        self.game_over_time.unwrap_or_else(|| {
+    pub fn elapsed_ms(&self, now: Instant) -> u64 {
+        self.game_over_ms.unwrap_or_else(|| {
             let effective_now = self.paused_at.unwrap_or(now);
             let elapsed = effective_now
                 .duration_since(self.start_time)
                 .saturating_sub(self.paused_total);
-            elapsed.as_secs()
+            elapsed.as_millis() as u64
         })
+    }
+
+    pub fn elapsed_secs(&self, now: Instant) -> u64 {
+        self.game_over_time
+            .unwrap_or_else(|| self.elapsed_ms(now) / 1000)
+    }
+
+    pub fn remaining_ms(&self, now: Instant) -> Option<u64> {
+        let limit_ms = self.mode.time_limit_secs()?.saturating_mul(1000);
+        Some(limit_ms.saturating_sub(self.elapsed_ms(now)))
     }
 
     pub fn remaining_secs(&self, now: Instant) -> Option<u64> {
@@ -83,9 +95,10 @@ impl GameSessionState {
 
     pub fn apply_mode_end_if_reached(&mut self, now: Instant) -> Option<SessionEnd> {
         if let Some(limit) = self.mode.time_limit_secs()
-            && self.elapsed_secs(now) >= limit
+            && self.elapsed_ms(now) >= limit.saturating_mul(1000)
         {
             self.game_over_time = Some(limit);
+            self.game_over_ms = Some(limit.saturating_mul(1000));
             self.time_up = true;
             self.state.game_over = true;
             return Some(SessionEnd::TimeUp);
@@ -94,7 +107,9 @@ impl GameSessionState {
         if let GameMode::FortyLines { target } = self.mode
             && self.state.lines >= target
         {
-            self.game_over_time = Some(self.elapsed_secs(now));
+            let ms = self.elapsed_ms(now);
+            self.game_over_ms = Some(ms);
+            self.game_over_time = Some(ms / 1000);
             self.time_up = true;
             self.state.game_over = true;
             return Some(SessionEnd::GoalReached);
@@ -103,7 +118,9 @@ impl GameSessionState {
         if let GameMode::Cheese { .. } = self.mode
             && self.state.garbage_remaining == 0
         {
-            self.game_over_time = Some(self.elapsed_secs(now));
+            let ms = self.elapsed_ms(now);
+            self.game_over_ms = Some(ms);
+            self.game_over_time = Some(ms / 1000);
             self.state.game_over = true;
             return Some(SessionEnd::GoalReached);
         }
@@ -124,7 +141,11 @@ impl NetSessionState {
         }
     }
 
+    pub fn elapsed_ms(&self, now: Instant) -> u64 {
+        now.duration_since(self.start_time).as_millis() as u64
+    }
+
     pub fn elapsed_secs(&self, now: Instant) -> u64 {
-        now.duration_since(self.start_time).as_secs()
+        self.elapsed_ms(now) / 1000
     }
 }

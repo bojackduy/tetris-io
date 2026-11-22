@@ -1,7 +1,7 @@
 [package]
 name = "tetris-io"
 description = "Terminal-based Tetris game built with Ratatui and Crossterm"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Duyyy123/tetris-io"
@@ -10,7 +10,17 @@ keywords = ["tetris", "terminal", "tui", "ratatui", "game"]
 categories = ["games", "command-line-interface"]
 
 [dependencies]
-ratatui = "0.26"
-crossterm = "0.27"
+ratatui = { version = "0.30.2", default-features = false, features = [
+    "crossterm_0_29",
+    "layout-cache",
+    "underline-color",
+] }
+crossterm = "0.29"
+rodio = { version = "0.23.0", default-features = false, features = [
+    "playback",
+    "mp3",
+    "vorbis",
+    "wav",
+] }
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }

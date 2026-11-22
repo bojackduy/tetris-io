@@ -60,14 +60,18 @@ impl Storage {
         };
 
         let config = AppConfig {
-            gravity_ms: stored.gravity_ms,
-            frame_ms: stored.frame_ms,
-            das_ms: stored.das_ms,
-            arr_ms: stored.arr_ms,
-            dcd_ms: stored.dcd_ms,
-            soft_drop_factor: stored.soft_drop_factor,
-            lock_delay_ms: stored.lock_delay_ms,
-            lock_reset_limit: stored.lock_reset_limit,
+            gravity_ms: stored.gravity_ms.clamp(1, 60_000),
+            frame_ms: stored.frame_ms.clamp(4, 1000),
+            das_ms: stored.das_ms.min(1000),
+            arr_ms: stored.arr_ms.min(200),
+            dcd_ms: stored.dcd_ms.min(500),
+            soft_drop_factor: stored.soft_drop_factor.min(1000),
+            lock_delay_ms: stored.lock_delay_ms.clamp(1, 5000),
+            lock_reset_limit: stored.lock_reset_limit.min(100),
+            sound_volume: stored.sound_volume.min(100),
+            rotation_sound: stored.rotation_sound,
+            ghost: stored.ghost,
+            grid_style: stored.grid_style.min(4),
             key_bindings,
         };
 
@@ -96,6 +100,10 @@ impl Storage {
             soft_drop_factor: config.soft_drop_factor,
             lock_delay_ms: config.lock_delay_ms,
             lock_reset_limit: config.lock_reset_limit,
+            sound_volume: config.sound_volume,
+            rotation_sound: config.rotation_sound,
+            ghost: config.ghost,
+            grid_style: config.grid_style,
             key_move_left: keycode_to_storage(move_left),
             key_move_right: keycode_to_storage(move_right),
             key_soft_drop: keycode_to_storage(soft_drop),

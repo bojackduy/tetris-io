@@ -1,7 +1,9 @@
-use std::io;
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
+use crate::adapters::audio::{Audio, SoundCue};
 use crate::adapters::input::{InputConfig, InputState, KeyBindings, keycode_label};
 use crate::adapters::net::{NetClient, NetLobby, NetMessage};
 use crate::adapters::render::{
@@ -14,11 +16,13 @@ use crate::domain::rng::random_seed;
 use crate::domain::rules::RulesConfig;
 use crossterm::ExecutableCommand;
 use crossterm::event::{
-    self, Event as CrosstermEvent, KeyCode, KeyEventKind, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableFocusChange, EnableFocusChange, Event as CrosstermEvent, KeyCode, KeyEventKind,
+    KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -171,38 +175,162 @@ impl DerefMut for App {
     }
 }
 
+struct TraceLogger {
+    start: Instant,
+    writer: BufWriter<File>,
+}
+
+impl TraceLogger {
+    fn from_args() -> io::Result<Option<Self>> {
+        let mut args = std::env::args().skip(1);
+        let mut path = None;
+        while let Some(arg) = args.next() {
+            if arg == "--trace" {
+                let next = args
+                    .next()
+                    .filter(|s| !s.starts_with('-'))
+                    .unwrap_or_else(|| "tetris-trace.log".to_string());
+                path = Some(next);
+            } else if let Some(rest) = arg.strip_prefix("--trace=") {
+                path = Some(rest.to_string());
+            }
+        }
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let file = File::create(path)?;
+        Ok(Some(Self {
+            start: Instant::now(),
+            writer: BufWriter::new(file),
+        }))
+    }
+
+    fn log(&mut self, msg: &str) {
+        let ms = self.start.elapsed().as_millis();
+        let _ = writeln!(self.writer, "+{ms:>7}ms {msg}");
+        let _ = self.writer.flush();
+    }
+}
+
 pub fn run() -> io::Result<()> {
+    let mut trace = TraceLogger::from_args()?;
+    let audio = Audio::new();
     let mut stdout = io::stdout();
     enable_raw_mode()?;
+    let _cleanup = CleanupGuard;
     stdout.execute(EnterAlternateScreen)?;
-    let _ = stdout.execute(PushKeyboardEnhancementFlags(
-        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-            | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
-    ));
+    let kitty_supported = supports_keyboard_enhancement().unwrap_or(false);
+    if kitty_supported {
+        stdout.execute(PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
+        ))?;
+    }
+    stdout.execute(EnableFocusChange)?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let _cleanup = CleanupGuard;
-
     let storage = Storage::open_default()?;
     let mut app = App::new(storage)?;
-    let mut last_tick = Instant::now();
+    if let Some(logger) = trace.as_mut() {
+        logger.log(&format!(
+            "startup TERM={:?} TERM_PROGRAM={:?} TERM_PROGRAM_VERSION={:?} kitty_supported={} cfg(das={},arr={},dcd={},sd={},lock={},reset={})",
+            std::env::var("TERM").ok(),
+            std::env::var("TERM_PROGRAM").ok(),
+            std::env::var("TERM_PROGRAM_VERSION").ok(),
+            kitty_supported,
+            app.config.das_ms,
+            app.config.arr_ms,
+            app.config.dcd_ms,
+            app.config.soft_drop_factor,
+            app.config.lock_delay_ms,
+            app.config.lock_reset_limit,
+        ));
+    }
+
+    // Never trust CSI ? u handshake alone: many terminals answer CSI ? u without
+    // actually sending KeyEventKind::Release, which would leave held keys stuck.
+    // Activate release-dependent DAS/ARR only after observing a real Release event
+    // (for example, releasing Enter on the Main Menu).
+    let mut observed_release = false;
+    let mut last_render = Instant::now() - Duration::from_secs(1);
 
     loop {
+        // Input and simulation run independently of the terminal's rendering rate.
+        let _ = event::poll(Duration::from_millis(1))?;
         let now = Instant::now();
-        let frame_duration = Duration::from_millis(app.config.frame_ms);
-        if now.duration_since(last_tick) < frame_duration {
-            std::thread::sleep(frame_duration.saturating_sub(now.duration_since(last_tick)));
-            continue;
+        if observed_release {
+            app.session.input.set_enhanced_input(true);
+            if let Some(net) = app.net_session.as_mut() {
+                net.input.set_enhanced_input(true);
+            }
         }
-        last_tick = now;
 
+        let mut dirty = false;
         let mut commands = Vec::new();
         while event::poll(Duration::from_millis(0))? {
             let ev = event::read()?;
+            if !matches!(
+                ev,
+                CrosstermEvent::Key(crossterm::event::KeyEvent {
+                    kind: KeyEventKind::Release | KeyEventKind::Repeat,
+                    ..
+                })
+            ) {
+                dirty = true;
+            }
+            if let CrosstermEvent::Key(key) = ev
+                && key.kind == KeyEventKind::Release
+            {
+                observed_release = true;
+            }
+            if let Some(logger) = trace.as_mut() {
+                logger.log(&format!(
+                    "ev={ev:?} observed_release={observed_release} enh={}",
+                    app.session.input.enhanced_input_active()
+                ));
+            }
+            if matches!(ev, CrosstermEvent::FocusLost) {
+                app.session.input.clear_motion();
+                if matches!(app.screen, Screen::Playing) {
+                    app.session.pause(now);
+                    app.screen = Screen::Paused { selected: 0 };
+                }
+                if let Some(net) = app.net_session.as_mut() {
+                    net.input.clear_motion();
+                }
+                commands.clear();
+                continue;
+            }
+            if let CrosstermEvent::Key(key) = ev
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c'))
+            {
+                app.exit = true;
+                break;
+            }
+            if let CrosstermEvent::Key(key) = ev
+                && key.kind == KeyEventKind::Press
+                && key.code == KeyCode::F(4)
+                && matches!(
+                    app.screen,
+                    Screen::Playing
+                        | Screen::Paused { .. }
+                        | Screen::GameOver { .. }
+                        | Screen::NameEntry
+                )
+            {
+                let mode = app.session.mode;
+                app.session = GameSession::new(&app.config, mode);
+                app.pending_score = None;
+                app.screen = Screen::Playing;
+                audio.play(SoundCue::Start, app.config.sound_volume);
+                commands.clear();
+                continue;
+            }
             let App {
                 storage,
                 config,
@@ -229,12 +357,18 @@ pub fn run() -> io::Result<()> {
                 Screen::Playing => {
                     if let CrosstermEvent::Key(key) = ev
                         && matches!(key.kind, KeyEventKind::Press)
-                        && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+                        && matches!(
+                            key.code,
+                            KeyCode::Esc | KeyCode::Char('p') | KeyCode::Char('P')
+                        )
                     {
                         session.pause(now);
                         session.input.clear_motion();
                         *screen = Screen::Paused { selected: 0 };
                         continue;
+                    }
+                    if observed_release {
+                        session.input.set_enhanced_input(true);
                     }
                     session.input.handle_event(ev, now, &mut commands);
                 }
@@ -248,6 +382,9 @@ pub fn run() -> io::Result<()> {
                             *net_session = None;
                             *screen = Screen::Menu { selected: 0 };
                             continue;
+                        }
+                        if observed_release {
+                            net.input.set_enhanced_input(true);
                         }
                         net.input.handle_event(ev, now, &mut commands);
                     }
@@ -273,6 +410,7 @@ pub fn run() -> io::Result<()> {
                                 *net_session = None;
                                 *session = GameSession::new(config, mode);
                                 *screen = Screen::Playing;
+                                audio.play(SoundCue::Start, config.sound_volume);
                             }
                             MenuIntent::Host => {
                                 *net_host_pending = None;
@@ -352,6 +490,7 @@ pub fn run() -> io::Result<()> {
                                 let mode = session.mode;
                                 *session = GameSession::new(config, mode);
                                 *screen = Screen::Playing;
+                                audio.play(SoundCue::Start, config.sound_volume);
                             }
                             GameOverIntent::Menu => {
                                 *screen = Screen::Menu { selected: 0 };
@@ -513,6 +652,11 @@ pub fn run() -> io::Result<()> {
         }
 
         if matches!(app.screen, Screen::Playing) {
+            // Count manual finesse inputs before software ARR repeats are appended.
+            let manual_finesse = count_finesse_inputs(&commands);
+            if manual_finesse > 0 {
+                app.session.state.add_finesse_inputs(manual_finesse);
+            }
             app.session.input.repeat_commands(now, &mut commands);
             if commands.iter().any(|c| matches!(c, Command::Quit)) {
                 app.session.input.clear_motion();
@@ -530,6 +674,20 @@ pub fn run() -> io::Result<()> {
             };
 
             let soft_drop_active = app.session.input.soft_drop_active();
+            let before_active = app.session.state.active;
+            let before_hold = app.session.state.hold;
+            let before_pieces = app.session.state.pieces_placed;
+            if let Some(logger) = trace.as_mut()
+                && !commands.is_empty()
+            {
+                logger.log(&format!(
+                    "step dt={dt_ms}ms cmds={commands:?} sd={soft_drop_active} before=({:?},x={},y={},r={})",
+                    app.session.state.active.kind,
+                    app.session.state.active.x,
+                    app.session.state.active.y,
+                    app.session.state.active.rotation.0
+                ));
+            }
             match advance_single_player(
                 &mut app.session,
                 now,
@@ -538,8 +696,38 @@ pub fn run() -> io::Result<()> {
                 &commands,
                 soft_drop_active,
             ) {
-                SinglePlayerStep::Continue { .. } => {}
+                SinglePlayerStep::Continue { events } => {
+                    if !events.is_empty()
+                        || app.session.state.active != before_active
+                        || app.session.state.hold != before_hold
+                        || app.session.state.pieces_placed != before_pieces
+                    {
+                        dirty = true;
+                    }
+                    if let Some(logger) = trace.as_mut()
+                        && (!commands.is_empty() || !events.is_empty())
+                    {
+                        logger.log(&format!(
+                            "after active=({:?},x={},y={},r={}) events={events:?} pieces={}",
+                            app.session.state.active.kind,
+                            app.session.state.active.x,
+                            app.session.state.active.y,
+                            app.session.state.active.rotation.0,
+                            app.session.state.pieces_placed
+                        ));
+                    }
+                    play_events(&audio, &app.config, &events, &app.session.state);
+                }
                 SinglePlayerStep::Ended => {
+                    dirty = true;
+                    audio.play(
+                        if app.session.time_up || !app.session.state.game_over {
+                            SoundCue::PerfectClear
+                        } else {
+                            SoundCue::GameOver
+                        },
+                        app.config.sound_volume,
+                    );
                     app.session.input.clear_motion();
                     queue_name_entry(&mut app, now);
                 }
@@ -625,6 +813,10 @@ pub fn run() -> io::Result<()> {
                 continue;
             };
 
+            let manual_finesse = count_finesse_inputs(&commands);
+            if manual_finesse > 0 {
+                net_session.state.add_finesse_inputs(manual_finesse);
+            }
             net_session.input.repeat_commands(now, &mut commands);
 
             if commands.iter().any(|c| matches!(c, Command::Quit)) {
@@ -645,6 +837,7 @@ pub fn run() -> io::Result<()> {
             };
 
             let soft_drop_active = net_session.input.soft_drop_active();
+            let before_active = net_session.state.active;
             let events = advance_sim_state(
                 &mut net_session.state,
                 rules_cfg,
@@ -652,6 +845,10 @@ pub fn run() -> io::Result<()> {
                 &commands,
                 soft_drop_active,
             );
+            if !events.is_empty() || net_session.state.active != before_active {
+                dirty = true;
+            }
+            play_events(&audio, &app.config, &events, &net_session.state);
 
             for event in &events {
                 match event {
@@ -693,6 +890,13 @@ pub fn run() -> io::Result<()> {
             }
         }
 
+        // Render immediately on any input or piece movement (matches Jstris's
+        // synchronous redraw on move); throttle only idle clock ticks to frame_ms.
+        if !dirty && now.duration_since(last_render) < Duration::from_millis(app.config.frame_ms) {
+            continue;
+        }
+        last_render = now;
+        terminal.backend_mut().execute(BeginSynchronizedUpdate)?;
         terminal.draw(|f| match app.screen {
             Screen::Menu { selected } => {
                 let items = menu_items(
@@ -720,36 +924,21 @@ pub fn run() -> io::Result<()> {
                 let footer = if let Some(item) = capture {
                     format!("Press a key for {} (Esc to cancel)", item.label())
                 } else {
-                    "Enter: rebind   Left/Right: adjust   Esc: back".to_string()
+                    format!(
+                        "Enter: apply/rebind   ◂▸: adjust   Esc: back{}",
+                        if audio.available() {
+                            ""
+                        } else {
+                            "   Audio unavailable"
+                        }
+                    )
                 };
                 render_settings(f, "Settings", &items, selected, &footer);
             }
             Screen::Playing => {
-                let (time_secs, time_label) = match app.session.mode {
-                    GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
-                    GameMode::Blitz { .. } => {
-                        (app.session.remaining_secs(now).unwrap_or(0), "Left")
-                    }
-                    GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
-                    GameMode::Cheese { .. } => (app.session.elapsed_secs(now), "Time"),
-                };
-                render_game(
-                    f,
-                    &app.session.state,
-                    RenderContext {
-                        time_secs,
-                        time_label,
-                        enhanced_input: app.session.input.enhanced_input_active(),
-                    },
-                );
+                render_game(f, &app.session.state, single_render_ctx(&app, now));
             }
             Screen::GameOver { selected } => {
-                let time_secs = match app.session.mode {
-                    GameMode::Endless => app.session.elapsed_secs(now),
-                    GameMode::Blitz { duration_secs } => duration_secs,
-                    GameMode::FortyLines { .. } => app.session.elapsed_secs(now),
-                    GameMode::Cheese { .. } => app.session.elapsed_secs(now),
-                };
                 let title = match app.session.mode {
                     GameMode::FortyLines { .. } => "40 LINES",
                     GameMode::Cheese { .. } => "CHEESE RACE",
@@ -761,17 +950,12 @@ pub fn run() -> io::Result<()> {
                         }
                     }
                 };
-                render_game_over(
-                    f,
-                    &app.session.state,
-                    RenderContext {
-                        time_secs,
-                        time_label: "Time",
-                        enhanced_input: app.session.input.enhanced_input_active(),
-                    },
-                    selected,
-                    title,
-                );
+                let mut ctx = single_render_ctx(&app, now);
+                if let GameMode::Blitz { duration_secs } = app.session.mode {
+                    ctx.time_ms = duration_secs.saturating_mul(1000);
+                    ctx.time_label = "Time";
+                }
+                render_game_over(f, &app.session.state, ctx, selected, title);
             }
             Screen::NameEntry => {
                 let mut lines = vec![
@@ -821,21 +1005,15 @@ pub fn run() -> io::Result<()> {
             }
             Screen::NetPlaying => {
                 if let Some(net_session) = &app.net_session {
-                    let time_secs = net_session.elapsed_secs(now);
                     render_game(
                         f,
                         &net_session.state,
-                        RenderContext {
-                            time_secs,
-                            time_label: "Time",
-                            enhanced_input: net_session.input.enhanced_input_active(),
-                        },
+                        net_render_ctx(&app.config, net_session, now),
                     );
                 }
             }
             Screen::NetOver { selected, outcome } => {
                 if let Some(net_session) = &app.net_session {
-                    let time_secs = net_session.elapsed_secs(now);
                     let title = match outcome {
                         NetOutcome::Win => "YOU WIN",
                         NetOutcome::Lose => "YOU LOSE",
@@ -845,11 +1023,7 @@ pub fn run() -> io::Result<()> {
                     render_game_over_custom(
                         f,
                         &net_session.state,
-                        RenderContext {
-                            time_secs,
-                            time_label: "Time",
-                            enhanced_input: net_session.input.enhanced_input_active(),
-                        },
+                        net_render_ctx(&app.config, net_session, now),
                         selected,
                         title,
                         &NET_OVER_ITEMS,
@@ -857,26 +1031,15 @@ pub fn run() -> io::Result<()> {
                 }
             }
             Screen::Paused { selected } => {
-                let (time_secs, time_label) = match app.session.mode {
-                    GameMode::Endless => (app.session.elapsed_secs(now), "Time"),
-                    GameMode::Blitz { .. } => {
-                        (app.session.remaining_secs(now).unwrap_or(0), "Left")
-                    }
-                    GameMode::FortyLines { .. } => (app.session.elapsed_secs(now), "Time"),
-                    GameMode::Cheese { .. } => (app.session.elapsed_secs(now), "Time"),
-                };
                 render_pause(
                     f,
                     &app.session.state,
-                    RenderContext {
-                        time_secs,
-                        time_label,
-                        enhanced_input: app.session.input.enhanced_input_active(),
-                    },
+                    single_render_ctx(&app, now),
                     selected,
                 );
             }
         })?;
+        terminal.backend_mut().execute(EndSynchronizedUpdate)?;
     }
 
     Ok(())
@@ -886,6 +1049,119 @@ fn queue_name_entry(app: &mut App, now: Instant) {
     app.pending_score = Some(build_pending_score(&app.session, now));
     app.name_input.clear();
     app.screen = Screen::NameEntry;
+}
+
+fn single_render_ctx(app: &App, now: Instant) -> RenderContext {
+    let (time_ms, time_label, mode_label, lines_target) = match app.session.mode {
+        GameMode::Endless => (app.session.elapsed_ms(now), "Time", "ENDLESS", None),
+        GameMode::Blitz { .. } => (
+            app.session.remaining_ms(now).unwrap_or(0),
+            "Left",
+            "BLITZ",
+            None,
+        ),
+        GameMode::FortyLines { target } => (
+            app.session.elapsed_ms(now),
+            "Time",
+            "40 LINES",
+            Some(target),
+        ),
+        GameMode::Cheese { .. } => (app.session.elapsed_ms(now), "Time", "CHEESE", None),
+    };
+    RenderContext {
+        time_ms,
+        time_label,
+        enhanced_input: app.session.input.enhanced_input_active(),
+        ghost: app.config.ghost,
+        grid_style: app.config.grid_style,
+        key_presses: app.session.input.key_presses(),
+        lock_delay_ms: app.config.lock_delay_ms,
+        mode_label,
+        lines_target,
+    }
+}
+
+fn net_render_ctx(config: &AppConfig, net_session: &NetSession, now: Instant) -> RenderContext {
+    RenderContext {
+        time_ms: net_session.elapsed_ms(now),
+        time_label: "Time",
+        enhanced_input: net_session.input.enhanced_input_active(),
+        ghost: config.ghost,
+        grid_style: config.grid_style,
+        key_presses: net_session.input.key_presses(),
+        lock_delay_ms: config.lock_delay_ms,
+        mode_label: "VERSUS",
+        lines_target: None,
+    }
+}
+
+fn count_finesse_inputs(commands: &[Command]) -> u32 {
+    let mut total = 0u32;
+    for cmd in commands {
+        match cmd {
+            Command::MoveLeft | Command::MoveRight | Command::RotateLeft | Command::RotateRight => {
+                total = total.saturating_add(1);
+            }
+            // Verified in Jstris rotateCurrentBlock: 180 rotation adds +2 to finesse counter.
+            Command::Rotate180 => {
+                total = total.saturating_add(2);
+            }
+            _ => {}
+        }
+    }
+    total
+}
+
+fn play_events(
+    audio: &Audio,
+    config: &AppConfig,
+    events: &[GameEvent],
+    state: &crate::domain::state::GameState,
+) {
+    for cue in event_sounds(
+        events,
+        state.combo,
+        state.last_clear_was_pc,
+        config.rotation_sound,
+    ) {
+        audio.play(cue, config.sound_volume);
+    }
+}
+
+fn event_sounds(
+    events: &[GameEvent],
+    combo: u32,
+    perfect_clear: bool,
+    rotation_sound: bool,
+) -> Vec<SoundCue> {
+    let mut sounds = Vec::new();
+    // Matches Jstris RainforestSFXset dispatch:
+    // - rotation sound only when enabled (#SErot)
+    // - harddrop aliases lock.mp3 once (do not double-trigger HardDrop + Lock)
+    // - every line clear triggers the exact Rainforest comboTones.mp3 step (c0..c14)
+    if events.contains(&GameEvent::Rotated) && rotation_sound {
+        sounds.push(SoundCue::Rotate);
+    }
+    if events.contains(&GameEvent::HardDropped) {
+        sounds.push(SoundCue::HardDrop);
+    } else if events.contains(&GameEvent::Locked) {
+        sounds.push(SoundCue::Lock);
+    }
+    if events
+        .iter()
+        .any(|event| matches!(event, GameEvent::LinesCleared(_)))
+    {
+        if combo > 0 {
+            sounds.push(SoundCue::Combo(combo));
+        }
+        if perfect_clear {
+            sounds.push(SoundCue::PerfectClear);
+        }
+    }
+    if events.contains(&GameEvent::GameOver) {
+        sounds.push(SoundCue::GameOver);
+    }
+    sounds
 }
 
 fn settings_lines(config: &AppConfig) -> Vec<String> {
@@ -906,6 +1182,25 @@ fn settings_lines(config: &AppConfig) -> Vec<String> {
             SettingItem::Das => format!("{}: {}", item.label(), config.das_ms),
             SettingItem::Arr => format!("{}: {}", item.label(), config.arr_ms),
             SettingItem::Dcd => format!("{}: {}", item.label(), config.dcd_ms),
+            SettingItem::SoftDropSpeed => format!("{}: {}", item.label(), config.soft_drop_label()),
+            SettingItem::SoundVolume => format!("{}: {}", item.label(), config.sound_volume),
+            SettingItem::RotationSound => format!(
+                "{}: {}",
+                item.label(),
+                if config.rotation_sound { "On" } else { "Off" }
+            ),
+            SettingItem::Ghost => format!(
+                "{}: {}",
+                item.label(),
+                if config.ghost { "On" } else { "Off" }
+            ),
+            SettingItem::Grid => format!(
+                "{}: {}",
+                item.label(),
+                ["None", "Standard", "Partial", "Vertical", "Full"]
+                    [usize::from(config.grid_style.min(4))]
+            ),
+            SettingItem::JstrisProfile => format!("{} (Enter)", item.label()),
             SettingItem::MoveLeft => format!("{}: {}", item.label(), keycode_label(move_left)),
             SettingItem::MoveRight => format!("{}: {}", item.label(), keycode_label(move_right)),
             SettingItem::SoftDrop => format!("{}: {}", item.label(), keycode_label(soft_drop)),
@@ -958,6 +1253,24 @@ fn adjust_setting(config: &mut AppConfig, item: SettingItem, direction: i32) {
         SettingItem::Das => config.das_ms = clamp_u64(config.das_ms, delta * 5, 0, 1000),
         SettingItem::Arr => config.arr_ms = clamp_u64(config.arr_ms, delta, 0, 200),
         SettingItem::Dcd => config.dcd_ms = clamp_u64(config.dcd_ms, delta * 5, 0, 500),
+        SettingItem::SoftDropSpeed => {
+            let rates = [20, 60, 120, 180, 0];
+            let current = rates
+                .iter()
+                .position(|rate| *rate == config.soft_drop_factor)
+                .unwrap_or(2);
+            config.soft_drop_factor =
+                rates[(current as i32 + direction).rem_euclid(rates.len() as i32) as usize];
+        }
+        SettingItem::SoundVolume => {
+            config.sound_volume = clamp_u64(u64::from(config.sound_volume), delta * 5, 0, 100) as u8
+        }
+        SettingItem::RotationSound => config.rotation_sound = !config.rotation_sound,
+        SettingItem::Ghost => config.ghost = !config.ghost,
+        SettingItem::Grid => {
+            config.grid_style = (i32::from(config.grid_style) + direction).rem_euclid(5) as u8
+        }
+        SettingItem::JstrisProfile => config.apply_jstris_profile(),
         _ => {}
     }
 }
@@ -1006,6 +1319,8 @@ struct CleanupGuard;
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
         let mut stdout = io::stdout();
+        let _ = stdout.execute(EndSynchronizedUpdate);
+        let _ = stdout.execute(DisableFocusChange);
         let _ = stdout.execute(PopKeyboardEnhancementFlags);
         let _ = disable_raw_mode();
         let _ = stdout.execute(LeaveAlternateScreen);

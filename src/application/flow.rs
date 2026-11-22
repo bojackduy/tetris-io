@@ -92,6 +92,12 @@ pub enum SettingItem {
     Das,
     Arr,
     Dcd,
+    SoftDropSpeed,
+    SoundVolume,
+    RotationSound,
+    Ghost,
+    Grid,
+    JstrisProfile,
     MoveLeft,
     MoveRight,
     SoftDrop,
@@ -117,6 +123,12 @@ impl SettingItem {
             SettingItem::Das => "DAS (ms)",
             SettingItem::Arr => "ARR (ms)",
             SettingItem::Dcd => "DCD (ms)",
+            SettingItem::SoftDropSpeed => "Soft-drop speed",
+            SettingItem::SoundVolume => "Sound volume (%)",
+            SettingItem::RotationSound => "Rotation sound",
+            SettingItem::Ghost => "Ghost piece",
+            SettingItem::Grid => "Grid",
+            SettingItem::JstrisProfile => "Apply Jstris profile",
             SettingItem::MoveLeft => "Move Left",
             SettingItem::MoveRight => "Move Right",
             SettingItem::SoftDrop => "Soft Drop",
@@ -144,10 +156,16 @@ impl SettingItem {
     }
 }
 
-pub const SETTINGS_ITEMS: [SettingItem; 12] = [
+pub const SETTINGS_ITEMS: [SettingItem; 18] = [
     SettingItem::Das,
     SettingItem::Arr,
     SettingItem::Dcd,
+    SettingItem::SoftDropSpeed,
+    SettingItem::SoundVolume,
+    SettingItem::RotationSound,
+    SettingItem::Ghost,
+    SettingItem::Grid,
+    SettingItem::JstrisProfile,
     SettingItem::MoveLeft,
     SettingItem::MoveRight,
     SettingItem::SoftDrop,

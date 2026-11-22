@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::adapters::input::{KeyBindings, keycode_label};
@@ -14,39 +14,76 @@ use crate::domain::{
     state::GameState,
 };
 
+const LEFT_COL_WIDTH: u16 = 18;
+const GARBAGE_BAR_WIDTH: u16 = 1;
+const BOARD_BOX_WIDTH: u16 = BOARD_WIDTH as u16 * 2 + 2;
+const RIGHT_COL_WIDTH: u16 = 14;
+const TOTAL_PLAY_WIDTH: u16 =
+    LEFT_COL_WIDTH + GARBAGE_BAR_WIDTH + BOARD_BOX_WIDTH + RIGHT_COL_WIDTH;
+
 #[derive(Debug, Clone, Copy)]
 pub struct RenderContext {
-    pub time_secs: u64,
+    pub time_ms: u64,
     pub time_label: &'static str,
     pub enhanced_input: bool,
+    pub ghost: bool,
+    pub grid_style: u8,
+    pub key_presses: u32,
+    pub lock_delay_ms: u64,
+    pub mode_label: &'static str,
+    pub lines_target: Option<u32>,
+}
+
+fn format_time_jstris(time_ms: u64) -> String {
+    let total_secs = time_ms / 1000;
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    let centis = (time_ms % 1000) / 10;
+    format!("{mins}:{secs:02}.{centis:02}")
+}
+
+fn calc_pps(pieces: u32, time_ms: u64) -> f64 {
+    if pieces == 0 || time_ms == 0 {
+        0.0
+    } else {
+        f64::from(pieces) / (time_ms as f64 / 1000.0)
+    }
+}
+
+fn calc_kpp(key_presses: u32, pieces: u32) -> f64 {
+    if pieces == 0 {
+        0.0
+    } else {
+        f64::from(key_presses) / f64::from(pieces)
+    }
 }
 
 pub fn render_game(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
-    let area = frame.size();
+    let area = frame.area();
     render_game_at(frame, area, state, ctx);
 }
 
-fn render_game_at(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
+fn playfield_layout(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
     let board_height = VISIBLE_HEIGHT as u16 + 2;
-    let board_width = BOARD_WIDTH as u16 * 2 + 2;
-    let left_width: u16 = 14;
-    let right_width: u16 = 12;
-    let total_width = left_width + board_width + right_width;
+    let show_status = area.height > board_height;
+    let status_h = u16::from(show_status);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(0),
             Constraint::Length(board_height),
+            Constraint::Length(status_h),
             Constraint::Min(0),
         ])
         .split(area);
 
+    let total_w = TOTAL_PLAY_WIDTH.min(area.width);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Min(0),
-            Constraint::Length(total_width),
+            Constraint::Length(total_w),
             Constraint::Min(0),
         ])
         .split(rows[1]);
@@ -54,19 +91,74 @@ fn render_game_at(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderC
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(left_width),
-            Constraint::Length(board_width),
-            Constraint::Length(right_width),
+            Constraint::Length(LEFT_COL_WIDTH),
+            Constraint::Length(GARBAGE_BAR_WIDTH),
+            Constraint::Length(BOARD_BOX_WIDTH),
+            Constraint::Length(RIGHT_COL_WIDTH),
         ])
         .split(cols[1]);
 
-    let left = columns[0];
-    let board_area = columns[1];
-    let right = columns[2];
+    (columns[0], columns[1], columns[2], columns[3], rows[2])
+}
 
+fn render_game_at(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
+    let (left, garbage_bar, board_area, right, status_area) = playfield_layout(area);
     render_left(frame, left, state, ctx);
-    render_board(frame, board_area, state);
+    render_garbage_bar(frame, garbage_bar, state);
+    render_board(frame, board_area, state, ctx);
     render_next(frame, right, state);
+    if status_area.height > 0 {
+        render_status_bar(frame, status_area, ctx);
+    }
+}
+
+fn render_garbage_bar(frame: &mut Frame, area: Rect, state: &GameState) {
+    let pending = state.pending_garbage().min(VISIBLE_HEIGHT as u32) as usize;
+    let mut lines = Vec::with_capacity(VISIBLE_HEIGHT + 2);
+    lines.push(Line::from(" "));
+    for row in 0..VISIBLE_HEIGHT {
+        let from_bottom = VISIBLE_HEIGHT - row;
+        if from_bottom <= pending {
+            lines.push(Line::from(Span::styled(
+                "█",
+                Style::default().fg(Color::Rgb(215, 15, 55)),
+            )));
+        } else {
+            lines.push(Line::from(" "));
+        }
+    }
+    lines.push(Line::from(" "));
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_status_bar(frame: &mut Frame, area: Rect, ctx: RenderContext) {
+    let input_span = if ctx.enhanced_input {
+        Span::styled(
+            "● ENHANCED DAS/ARR",
+            Style::default().fg(Color::Rgb(89, 177, 1)),
+        )
+    } else {
+        Span::styled(
+            "▲ LEGACY INPUT (OS repeat — terminal lacks key-release)",
+            Style::default()
+                .fg(Color::Rgb(227, 159, 2))
+                .add_modifier(Modifier::BOLD),
+        )
+    };
+    let line = Line::from(vec![
+        Span::styled(
+            format!("{}  ", ctx.mode_label),
+            Style::default()
+                .fg(Color::Rgb(15, 155, 215))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "F4: Restart  P/Esc: Pause   ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        input_span,
+    ]);
+    frame.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
 }
 
 /// Menu item indices for the spatial layout
@@ -85,7 +177,7 @@ pub fn render_menu(
     footer: &str,
     _bindings: KeyBindings,
 ) {
-    let area = frame.size();
+    let area = frame.area();
     frame.render_widget(Clear, area);
 
     // Calculate layout dimensions
@@ -353,7 +445,7 @@ pub fn render_settings(
 }
 
 pub fn render_info_screen(frame: &mut Frame, title: &str, lines: &[String], footer: &str) {
-    let area = frame.size();
+    let area = frame.area();
     let width = area.width.clamp(24, 60);
     let height = (lines.len() as u16 + 6)
         .min(area.height.saturating_sub(2))
@@ -388,150 +480,10 @@ pub fn render_game_over(
     state: &GameState,
     ctx: RenderContext,
     selected: usize,
-    _title: &str,
+    title: &str,
 ) {
-    // Render dimmed game in background
-    render_game_dimmed(frame, state, ctx);
-
-    let area = frame.size();
-
-    // Calculate board position to overlay inside it
-    let board_height = VISIBLE_HEIGHT as u16 + 2;
-    let board_width = BOARD_WIDTH as u16 * 2 + 2;
-    let left_width: u16 = 14;
-    let right_width: u16 = 12;
-    let total_width = left_width + board_width + right_width;
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(board_height),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(total_width),
-            Constraint::Min(0),
-        ])
-        .split(rows[1]);
-
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(left_width),
-            Constraint::Length(board_width),
-            Constraint::Length(right_width),
-        ])
-        .split(cols[1]);
-
-    let board_area = columns[1];
-
-    // Create overlay inside the board area
-    let overlay_width = board_area.width.saturating_sub(2).min(20);
-    let overlay_height = board_area.height.saturating_sub(2).min(14);
-    let overlay = centered_rect(board_area, overlay_width, overlay_height);
-
-    frame.render_widget(Clear, overlay);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red));
-    let inner = block.inner(overlay);
-    frame.render_widget(block, overlay);
-
-    // Split inner into: title, content (2-col), hint
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // Title
-            Constraint::Min(0),    // Content (stats + actions)
-            Constraint::Length(1), // Hint
-        ])
-        .split(inner);
-
-    // Title - spaced "G A M E  O V E R"
-    let title = Line::from(Span::styled(
-        "GAME OVER",
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-    ));
-    frame.render_widget(
-        Paragraph::new(vec![Line::from(""), title]).alignment(ratatui::layout::Alignment::Center),
-        sections[0],
-    );
-
-    // Content area - 2 columns: stats left, actions right
-    let content_cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(55), // Stats
-            Constraint::Percentage(45), // Actions
-        ])
-        .split(sections[1]);
-
-    // Stats column (left)
-    let stats = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "SCORE",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format_score_with_commas(state.score)),
-        Line::from(""),
-        Line::from(Span::styled(
-            "LEVEL",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format!("{}", state.level)),
-        Line::from(""),
-        Line::from(Span::styled(
-            "LINES",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format!("{}", state.lines)),
-        Line::from(""),
-        Line::from(Span::styled(
-            ctx.time_label,
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format!(
-            "{:02}:{:02}",
-            ctx.time_secs / 60,
-            ctx.time_secs % 60
-        )),
-    ];
-    frame.render_widget(Paragraph::new(stats), content_cols[0]);
-
-    // Actions column (right)
-    let actions_area = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(content_cols[1]);
-
     let items = ["Retry", "Menu", "Quit"];
-    render_list(frame, &items, selected, actions_area[1]);
-
-    // Hint
-    let hint = Line::from(Span::styled(
-        "↵ select",
-        Style::default().fg(Color::DarkGray),
-    ));
-    frame.render_widget(
-        Paragraph::new(vec![hint]).alignment(ratatui::layout::Alignment::Center),
-        sections[2],
-    );
+    render_game_over_custom(frame, state, ctx, selected, title, &items);
 }
 
 pub fn render_game_over_custom(
@@ -542,80 +494,41 @@ pub fn render_game_over_custom(
     title: &str,
     items: &[&str],
 ) {
-    // Render dimmed game in background
     render_game_dimmed(frame, state, ctx);
 
-    let area = frame.size();
-
-    // Calculate board position to overlay inside it
-    let board_height = VISIBLE_HEIGHT as u16 + 2;
-    let board_width = BOARD_WIDTH as u16 * 2 + 2;
-    let left_width: u16 = 14;
-    let right_width: u16 = 12;
-    let total_width = left_width + board_width + right_width;
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(board_height),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(total_width),
-            Constraint::Min(0),
-        ])
-        .split(rows[1]);
-
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(left_width),
-            Constraint::Length(board_width),
-            Constraint::Length(right_width),
-        ])
-        .split(cols[1]);
-
-    let board_area = columns[1];
-
-    // Create overlay inside the board area
-    let overlay_width = board_area.width.saturating_sub(2).min(20);
-    let overlay_height = board_area.height.saturating_sub(2).min(14);
-    let overlay = centered_rect(board_area, overlay_width, overlay_height);
+    let area = frame.area();
+    let overlay_width = area.width.saturating_sub(4).min(38);
+    let overlay_height = area.height.saturating_sub(2).min(15);
+    let overlay = centered_rect(area, overlay_width, overlay_height);
 
     frame.render_widget(Clear, overlay);
 
-    // Determine border color based on title (win=green, lose=red, draw=yellow)
-    let border_color = if title.to_lowercase().contains("win") {
-        Color::Green
-    } else if title.to_lowercase().contains("lose") || title.to_lowercase().contains("lost") {
-        Color::Red
-    } else {
-        Color::Yellow
-    };
+    let lower = title.to_lowercase();
+    let border_color =
+        if lower.contains("win") || lower.contains("40 lines") || lower.contains("cheese") {
+            Color::Rgb(89, 177, 1)
+        } else if lower.contains("lose") || lower.contains("lost") || lower.contains("game over") {
+            Color::Rgb(215, 15, 55)
+        } else {
+            Color::Rgb(227, 159, 2)
+        };
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
     let inner = block.inner(overlay);
     frame.render_widget(block, overlay);
 
-    // Split inner into: title, content (2-col), hint
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2), // Title
-            Constraint::Min(0),    // Content (stats + actions)
+            Constraint::Min(8),    // Stats + actions
             Constraint::Length(1), // Hint
         ])
         .split(inner);
 
-    // Title
     let title_line = Line::from(Span::styled(
         title.to_uppercase(),
         Style::default()
@@ -623,76 +536,53 @@ pub fn render_game_over_custom(
             .add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(
-        Paragraph::new(vec![Line::from(""), title_line])
-            .alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(vec![Line::from(""), title_line]).alignment(Alignment::Center),
         sections[0],
     );
 
-    // Content area - 2 columns: stats left, actions right
     let content_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(55), // Stats
-            Constraint::Percentage(45), // Actions
+            Constraint::Percentage(62), // Jstris run summary stats
+            Constraint::Percentage(38), // Actions
         ])
         .split(sections[1]);
 
-    // Stats column (left)
+    let label_style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::DIM);
+    let pps = calc_pps(state.pieces_placed, ctx.time_ms);
+    let kpp = calc_kpp(ctx.key_presses, state.pieces_placed);
+    let stat_row = |label: &'static str, value: String| {
+        Line::from(vec![
+            Span::styled(format!(" {label:<8}"), label_style),
+            Span::raw(value),
+        ])
+    };
     let stats = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "SCORE",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format_score_with_commas(state.score)),
-        Line::from(""),
-        Line::from(Span::styled(
-            "LEVEL",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format!("{}", state.level)),
-        Line::from(""),
-        Line::from(Span::styled(
-            "LINES",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format!("{}", state.lines)),
-        Line::from(""),
-        Line::from(Span::styled(
-            ctx.time_label,
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        Line::from(format!(
-            "{:02}:{:02}",
-            ctx.time_secs / 60,
-            ctx.time_secs % 60
-        )),
+        stat_row(ctx.time_label, format_time_jstris(ctx.time_ms)),
+        stat_row("Lines", format!("{}", state.lines)),
+        stat_row("Pieces", format!("{}", state.pieces_placed)),
+        stat_row("PPS", format!("{pps:.2}")),
+        stat_row("KPP", format!("{kpp:.2}")),
+        stat_row("Finesse", format!("{}", state.finesse_faults)),
+        stat_row("Attack", format!("{}", state.attack)),
+        stat_row("Score", format_score_with_commas(state.score)),
     ];
     frame.render_widget(Paragraph::new(stats), content_cols[0]);
 
-    // Actions column (right)
     let actions_area = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(content_cols[1]);
-
     render_list(frame, items, selected, actions_area[1]);
 
-    // Hint
     let hint = Line::from(Span::styled(
-        "↵ select",
+        "↵ select   F4 restart",
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(
-        Paragraph::new(vec![hint]).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(vec![hint]).alignment(Alignment::Center),
         sections[2],
     );
 }
@@ -709,170 +599,95 @@ fn combo_lines(state: &GameState) -> Vec<Line<'static>> {
 }
 
 pub fn render_pause(frame: &mut Frame, state: &GameState, ctx: RenderContext, selected: usize) {
-    // Render the game with dimmed colors
     render_game_dimmed(frame, state, ctx);
 
-    let area = frame.size();
-
-    // Calculate board position to overlay inside it
-    let board_height = VISIBLE_HEIGHT as u16 + 2;
-    let board_width = BOARD_WIDTH as u16 * 2 + 2;
-    let left_width: u16 = 14;
-    let right_width: u16 = 12;
-    let total_width = left_width + board_width + right_width;
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(board_height),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(total_width),
-            Constraint::Min(0),
-        ])
-        .split(rows[1]);
-
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(left_width),
-            Constraint::Length(board_width),
-            Constraint::Length(right_width),
-        ])
-        .split(cols[1]);
-
-    let board_area = columns[1];
-
-    // Create overlay inside the board area
-    let overlay_width = board_area.width.saturating_sub(4).min(18);
-    let overlay_height = board_area.height.saturating_sub(4).min(16);
-    let overlay = centered_rect(board_area, overlay_width, overlay_height);
+    let area = frame.area();
+    let overlay_width = area.width.saturating_sub(4).min(30);
+    let overlay_height = area.height.saturating_sub(2).min(17);
+    let overlay = centered_rect(area, overlay_width, overlay_height);
 
     frame.render_widget(Clear, overlay);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(227, 159, 2)));
     let inner = block.inner(overlay);
     frame.render_widget(block, overlay);
 
-    // Split inner into: title, stats, separator, actions, hint
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2), // Title
-            Constraint::Length(4), // Stats
+            Constraint::Length(7), // Jstris stats
             Constraint::Length(1), // Separator
             Constraint::Length(4), // Actions
             Constraint::Min(0),    // Hint
         ])
         .split(inner);
 
-    // Title
     let title = Line::from(vec![
-        Span::styled("═", Style::default().fg(Color::Yellow)),
+        Span::styled("═", Style::default().fg(Color::Rgb(227, 159, 2))),
         Span::styled(
             " PAUSED ",
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Rgb(227, 159, 2))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("═", Style::default().fg(Color::Yellow)),
+        Span::styled("═", Style::default().fg(Color::Rgb(227, 159, 2))),
     ]);
     frame.render_widget(
-        Paragraph::new(vec![Line::from(""), title]).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(vec![Line::from(""), title]).alignment(Alignment::Center),
         sections[0],
     );
 
-    // Stats
+    let pps = calc_pps(state.pieces_placed, ctx.time_ms);
+    let kpp = calc_kpp(ctx.key_presses, state.pieces_placed);
     let stats = vec![
         Line::from(format!(
-            " Score  {:>6}",
-            format_score_with_commas(state.score)
-        )),
-        Line::from(format!(" Level  {:>6}", state.level)),
-        Line::from(format!(" Lines  {:>6}", state.lines)),
-        Line::from(format!(
-            " {}  {:>4}:{:02}",
+            " {:<8}{:>14}",
             ctx.time_label,
-            ctx.time_secs / 60,
-            ctx.time_secs % 60
+            format_time_jstris(ctx.time_ms)
+        )),
+        Line::from(format!(" {:<8}{:>14}", "Lines", state.lines)),
+        Line::from(format!(" {:<8}{:>14.2}", "PPS", pps)),
+        Line::from(format!(" {:<8}{:>14.2}", "KPP", kpp)),
+        Line::from(format!(" {:<8}{:>14}", "Finesse", state.finesse_faults)),
+        Line::from(format!(" {:<8}{:>14}", "Attack", state.attack)),
+        Line::from(format!(
+            " {:<8}{:>14}",
+            "Score",
+            format_score_with_commas(state.score)
         )),
     ];
     frame.render_widget(Paragraph::new(stats), sections[1]);
 
-    // Separator
     let sep = Line::from(Span::styled(
         "─".repeat(inner.width as usize),
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(vec![sep]), sections[2]);
 
-    // Actions
     let items = ["Resume", "Menu", "Quit"];
     render_list(frame, &items, selected, sections[3]);
 
-    // Hint
     let hint = Line::from(Span::styled(
-        "P resume",
+        "P/Esc resume   F4 restart",
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(
-        Paragraph::new(vec![hint]).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(vec![hint]).alignment(Alignment::Center),
         sections[4],
     );
 }
 
 fn render_game_dimmed(frame: &mut Frame, state: &GameState, ctx: RenderContext) {
-    let area = frame.size();
+    let area = frame.area();
     render_game_at_dimmed(frame, area, state, ctx);
 }
 
 fn render_game_at_dimmed(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
-    let board_height = VISIBLE_HEIGHT as u16 + 2;
-    let board_width = BOARD_WIDTH as u16 * 2 + 2;
-    let left_width: u16 = 14;
-    let right_width: u16 = 12;
-    let total_width = left_width + board_width + right_width;
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(board_height),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(total_width),
-            Constraint::Min(0),
-        ])
-        .split(rows[1]);
-
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(left_width),
-            Constraint::Length(board_width),
-            Constraint::Length(right_width),
-        ])
-        .split(cols[1]);
-
-    let left = columns[0];
-    let board_area = columns[1];
-    let right = columns[2];
-
+    let (left, _garbage_bar, board_area, right, _status) = playfield_layout(area);
     render_left_dimmed(frame, left, state, ctx);
     render_board_dimmed(frame, board_area, state);
     render_next_dimmed(frame, right, state);
@@ -923,10 +738,9 @@ fn render_left_dimmed(frame: &mut Frame, area: Rect, state: &GameState, ctx: Ren
         Line::from(format!("Level {:02}", state.level)),
         Line::from(format!("{} {:02}", lines_label, lines_value)),
         Line::from(format!(
-            "{} {:02}:{:02}",
+            "{} {}",
             ctx.time_label,
-            ctx.time_secs / 60,
-            ctx.time_secs % 60
+            format_time_jstris(ctx.time_ms)
         )),
     ];
     let input_label = if ctx.enhanced_input { "ENH" } else { "BASIC" };
@@ -1111,87 +925,138 @@ fn render_left(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderCont
     let dim_header = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::DIM);
+    let val_style = Style::default().fg(Color::White);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5), // Hold (reduced - no border)
+            Constraint::Length(5), // Hold box
             Constraint::Length(1), // Spacer
-            Constraint::Min(0),    // Combo
+            Constraint::Length(4), // Clear / Combo / B2B callout
             Constraint::Length(1), // Spacer
-            Constraint::Length(5), // Score panel (reduced - no border)
+            Constraint::Min(9),    // Jstris live stats
         ])
         .split(area);
 
-    // Hold - borderless
-    let hold_header = Line::from(Span::styled("HOLD", dim_header));
-    let mut hold_lines = vec![hold_header];
-    hold_lines.extend(piece_preview_lines(state.hold));
-    frame.render_widget(Paragraph::new(hold_lines), chunks[0]);
+    // Hold box (dimmed when hold is already used this turn, matching Jstris)
+    let hold_block = Block::default()
+        .title(Span::styled(" HOLD ", dim_header))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let hold_inner = hold_block.inner(chunks[0]);
+    frame.render_widget(hold_block, chunks[0]);
+    let hold_lines = if state.hold_used {
+        piece_preview_lines_compact(state.hold, true)
+    } else {
+        piece_preview_lines_compact(state.hold, false)
+    };
+    frame.render_widget(Paragraph::new(hold_lines), hold_inner);
 
-    // Combo - borderless
-    let combo_header = Line::from(Span::styled("COMBO", dim_header));
-    let combo_content = combo_lines(state);
-    let mut combo_lines_full = vec![combo_header];
-    combo_lines_full.extend(combo_content);
-    frame.render_widget(Paragraph::new(combo_lines_full), chunks[2]);
+    // Clear / Spin / B2B / Combo callout
+    let mut callout_lines = Vec::new();
+    if let Some(label) = &state.last_clear_label {
+        for part in label.split(" | ").take(4) {
+            let color = if part.contains("Perfect") {
+                Color::Rgb(227, 159, 2)
+            } else if part.contains("T-Spin") {
+                Color::Rgb(175, 41, 138)
+            } else if part.contains("B2B") {
+                Color::Rgb(15, 155, 215)
+            } else if part.contains("Combo") {
+                Color::Rgb(89, 177, 1)
+            } else {
+                Color::White
+            };
+            callout_lines.push(Line::from(Span::styled(
+                part.to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )));
+        }
+    }
+    frame.render_widget(Paragraph::new(callout_lines), chunks[2]);
 
-    // Score panel - borderless with formatted values
+    // Jstris live stats
     let pending_garbage = state.pending_garbage();
     let (lines_label, lines_value) = if state.garbage_remaining > 0 {
-        ("Garbage", state.garbage_remaining)
+        ("Cheese", state.garbage_remaining)
+    } else if let Some(target) = ctx.lines_target {
+        ("Left", target.saturating_sub(state.lines))
     } else if pending_garbage > 0 {
-        ("Incoming", pending_garbage)
+        ("Incom", pending_garbage)
     } else {
         ("Lines", state.lines)
     };
 
+    let pps = calc_pps(state.pieces_placed, ctx.time_ms);
+    let kpp = calc_kpp(ctx.key_presses, state.pieces_placed);
+
+    let stat_row = |label: &'static str, value: String| {
+        Line::from(vec![
+            Span::styled(format!("{label:<8}"), dim_header),
+            Span::styled(value, val_style),
+        ])
+    };
+
     let score_lines = vec![
-        Line::from(vec![
-            Span::styled("Score ", dim_header),
-            Span::raw(format_score_with_commas(state.score)),
-        ]),
-        Line::from(vec![
-            Span::styled("Level ", dim_header),
-            Span::raw(format!("{}", state.level)),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("{} ", lines_label), dim_header),
-            Span::raw(format!("{}", lines_value)),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("{} ", ctx.time_label), dim_header),
-            Span::raw(format!(
-                "{:02}:{:02}",
-                ctx.time_secs / 60,
-                ctx.time_secs % 60
-            )),
-        ]),
+        stat_row(ctx.time_label, format_time_jstris(ctx.time_ms)),
+        stat_row(lines_label, format!("{lines_value}")),
+        stat_row("Attack", format!("{}", state.attack)),
+        stat_row("PPS", format!("{pps:.2}")),
+        stat_row("KPP", format!("{kpp:.2}")),
+        stat_row("Finesse", format!("{}", state.finesse_faults)),
+        stat_row("Pieces", format!("{}", state.pieces_placed)),
+        stat_row("Score", format_score_with_commas(state.score)),
     ];
     frame.render_widget(Paragraph::new(score_lines), chunks[4]);
 }
 
-fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
+fn render_board(frame: &mut Frame, area: Rect, state: &GameState, ctx: RenderContext) {
+    let border_color = if state.pending_garbage() >= 4 {
+        Color::Rgb(215, 15, 55)
+    } else {
+        Color::DarkGray
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(border_color));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let mut lines: Vec<Line> = Vec::with_capacity(VISIBLE_HEIGHT);
-    let ghost = ghost_piece(state);
-    let ghost_blocks = ghost.blocks();
+    let ghost_blocks = if ctx.ghost {
+        Some(ghost_piece(state).blocks())
+    } else {
+        None
+    };
     let active_blocks = state.active.blocks();
 
-    for y in VISIBLE_START_Y as i32..(VISIBLE_START_Y + VISIBLE_HEIGHT) as i32 {
-        let mut spans: Vec<Span> = Vec::with_capacity(BOARD_WIDTH * 2);
+    let lock_urgent = state.grounded
+        && ctx.lock_delay_ms > 0
+        && state.lock_delay_ms.saturating_mul(10) >= ctx.lock_delay_ms.saturating_mul(7);
+
+    for (row_idx, y) in
+        (VISIBLE_START_Y as i32..(VISIBLE_START_Y + VISIBLE_HEIGHT) as i32).enumerate()
+    {
+        let mut spans: Vec<Span> = Vec::with_capacity(BOARD_WIDTH);
         for x in 0..BOARD_WIDTH as i32 {
             let active_kind = block_at(active_blocks, x, y).map(|_| state.active.kind);
-            let ghost_kind = block_at(ghost_blocks, x, y).map(|_| state.active.kind);
+            let ghost_kind = ghost_blocks
+                .and_then(|blocks| block_at(blocks, x, y))
+                .map(|_| state.active.kind);
             let filled_kind = state.board.get(x, y);
 
             let span = if let Some(kind) = active_kind {
-                Span::styled("██", Style::default().fg(piece_color(kind)))
+                let glyph = if lock_urgent { "▓▓" } else { "██" };
+                let style = if lock_urgent {
+                    Style::default()
+                        .fg(piece_color(kind))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(piece_color(kind))
+                };
+                Span::styled(glyph, style)
             } else if let Some(kind) = filled_kind {
                 let color = if state.board.is_garbage_cell(x, y) {
                     garbage_color()
@@ -1207,7 +1072,7 @@ fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
                         .add_modifier(Modifier::DIM),
                 )
             } else {
-                Span::styled("· ", Style::default().fg(Color::DarkGray))
+                empty_grid_span(ctx.grid_style, row_idx)
             };
             spans.push(span);
         }
@@ -1218,33 +1083,83 @@ fn render_board(frame: &mut Frame, area: Rect, state: &GameState) {
     frame.render_widget(board, inner);
 }
 
+fn empty_grid_span(grid_style: u8, row_idx: usize) -> Span<'static> {
+    let style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::DIM);
+    match grid_style {
+        0 => Span::raw("  "),
+        1 => Span::styled("· ", style),
+        2 => {
+            if row_idx.is_multiple_of(2) {
+                Span::styled("· ", style)
+            } else {
+                Span::raw("  ")
+            }
+        }
+        3 => Span::styled("│ ", style),
+        _ => Span::styled("┼─", style),
+    }
+}
+
+fn piece_preview_lines_compact(kind: Option<PieceType>, dimmed: bool) -> Vec<Line<'static>> {
+    let mut grid = [[false; 4]; 3];
+    let mut color = Color::White;
+    if let Some(kind) = kind {
+        color = piece_color(kind);
+        let piece = Piece {
+            kind,
+            rotation: crate::domain::piece::Rotation(0),
+            x: 0,
+            y: 0,
+        };
+        for (x, y) in piece.blocks() {
+            if (0..4).contains(&x) && (0..3).contains(&y) {
+                grid[y as usize][x as usize] = true;
+            }
+        }
+    }
+
+    let style = if dimmed {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    } else {
+        Style::default().fg(color)
+    };
+    let glyph = if dimmed { "░░" } else { "██" };
+    let mut lines = Vec::with_capacity(3);
+    for row in &grid {
+        let mut spans = Vec::with_capacity(5);
+        spans.push(Span::raw("  "));
+        for &cell in row {
+            if cell {
+                spans.push(Span::styled(glyph, style));
+            } else {
+                spans.push(Span::raw("  "));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
 fn render_next(frame: &mut Frame, area: Rect, state: &GameState) {
     let dim_header = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::DIM);
 
-    // Reserve first line for header
-    let header_area = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    let inner = Rect {
-        x: area.x,
-        y: area.y + 1,
-        width: area.width,
-        height: area.height.saturating_sub(1),
-    };
-
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled("NEXT", dim_header))),
-        header_area,
-    );
+    let block = Block::default()
+        .title(Span::styled(" NEXT ", dim_header))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
     let inner_h = inner.height as usize;
     let inner_w = inner.width as usize;
-    let preview_h = 3usize; // Compact preview
+    let preview_h = 3usize;
     let preview_w = 4usize;
     let next = state.peek_next(5);
 
@@ -1303,39 +1218,6 @@ fn render_next(frame: &mut Frame, area: Rect, state: &GameState) {
     frame.render_widget(widget, inner);
 }
 
-fn piece_preview_lines(kind: Option<PieceType>) -> Vec<Line<'static>> {
-    let mut grid = [[false; 4]; 4];
-    let mut color = Color::White;
-    if let Some(kind) = kind {
-        color = piece_color(kind);
-        let piece = Piece {
-            kind,
-            rotation: crate::domain::piece::Rotation(0),
-            x: 0,
-            y: 0,
-        };
-        for (x, y) in piece.blocks() {
-            if (0..4).contains(&x) && (0..4).contains(&y) {
-                grid[y as usize][x as usize] = true;
-            }
-        }
-    }
-
-    let mut lines = Vec::with_capacity(4);
-    for row in &grid {
-        let mut spans = Vec::with_capacity(4);
-        for &cell in row {
-            if cell {
-                spans.push(Span::styled("██", Style::default().fg(color)));
-            } else {
-                spans.push(Span::raw("  "));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-    lines
-}
-
 fn block_at(blocks: [(i32, i32); 4], x: i32, y: i32) -> Option<()> {
     for (bx, by) in blocks {
         if bx == x && by == y {
@@ -1346,19 +1228,20 @@ fn block_at(blocks: [(i32, i32); 4], x: i32, y: i32) -> Option<()> {
 }
 
 fn piece_color(kind: PieceType) -> Color {
+    // Exact Jstris default palette from shipped game.js GameCore.colors.
     match kind {
-        PieceType::I => Color::Rgb(68, 175, 223),
-        PieceType::O => Color::Rgb(244, 208, 62),
-        PieceType::T => Color::Rgb(175, 59, 159),
-        PieceType::S => Color::Rgb(82, 181, 79),
-        PieceType::Z => Color::Rgb(187, 64, 80),
-        PieceType::J => Color::Rgb(24, 101, 181),
-        PieceType::L => Color::Rgb(244, 135, 44),
+        PieceType::I => Color::Rgb(15, 155, 215), // #0F9BD7
+        PieceType::O => Color::Rgb(227, 159, 2),  // #E39F02
+        PieceType::T => Color::Rgb(175, 41, 138), // #AF298A
+        PieceType::S => Color::Rgb(89, 177, 1),   // #59B101
+        PieceType::Z => Color::Rgb(215, 15, 55),  // #D70F37
+        PieceType::J => Color::Rgb(33, 65, 198),  // #2141C6
+        PieceType::L => Color::Rgb(227, 91, 2),   // #E35B02
     }
 }
 
 fn garbage_color() -> Color {
-    Color::DarkGray
+    Color::Rgb(153, 153, 153) // #999999
 }
 
 fn ascii_title_lines() -> Vec<Line<'static>> {
@@ -1397,7 +1280,7 @@ fn render_list_screen(
     footer: &str,
     width_hint: u16,
 ) {
-    let area = frame.size();
+    let area = frame.area();
     let width = width_hint.min(area.width.saturating_sub(2)).max(20);
     let height = (items.len() as u16 + 6)
         .min(area.height.saturating_sub(2))

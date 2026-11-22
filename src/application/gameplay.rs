@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::domain::command::Command;
 use crate::domain::events::Event;
@@ -17,8 +17,10 @@ pub enum SinglePlayerStep {
 
 pub fn frame_dt_ms(last_frame: &mut Instant, now: Instant, max_dt_ms: u64) -> u64 {
     let dt = now.duration_since(*last_frame);
-    *last_frame = now;
-    clamp_dt_ms(dt.as_millis() as u64, max_dt_ms)
+    let whole_ms = dt.as_millis() as u64;
+    // Keep the fractional millisecond. Polling input faster than rendering must not slow gravity.
+    *last_frame += Duration::from_millis(whole_ms);
+    clamp_dt_ms(whole_ms, max_dt_ms)
 }
 
 pub fn advance_single_player(

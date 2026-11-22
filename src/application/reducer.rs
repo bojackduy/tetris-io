@@ -251,7 +251,7 @@ pub fn reduce_settings_input(
                     *capture = Some(item);
                     SettingsIntent::None
                 } else {
-                    SettingsIntent::None
+                    SettingsIntent::AdjustTiming { item, direction: 1 }
                 }
             }
             UiKey::Esc => SettingsIntent::BackToMenu,

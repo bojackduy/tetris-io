@@ -1,6 +1,6 @@
 project:
   name: tetris-io
-  version: 1.0.0
+  version: 0.2.0
   description: Terminal-based Tetris game
   longDescription: |
     A modern Tetris implementation in Rust featuring SRS rotation,

@@ -2,10 +2,12 @@ use super::piece::PieceType;
 
 pub const BOARD_WIDTH: usize = 10;
 pub const PLAY_HEIGHT: usize = 20;
-pub const BUFFER_HEIGHT: usize = 10;
+// Jstris uses a single nonsolid buffer row ("deadline") immediately above the 20 visible rows.
+pub const BUFFER_HEIGHT: usize = 1;
 pub const BOARD_HEIGHT: usize = PLAY_HEIGHT + BUFFER_HEIGHT;
-pub const VISIBLE_HEIGHT: usize = BOARD_HEIGHT;
-pub const VISIBLE_START_Y: usize = 0;
+pub const VISIBLE_HEIGHT: usize = PLAY_HEIGHT;
+pub const VISIBLE_START_Y: usize = BUFFER_HEIGHT;
+pub const DEADLINE_Y: i32 = 0;
 
 pub type Cell = Option<PieceType>;
 

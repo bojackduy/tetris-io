@@ -1,3 +1,5 @@
 target/
 tetris.db
 /Cargo.lock
+graphify-out/
+tetris-trace.log

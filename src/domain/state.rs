@@ -3,13 +3,15 @@ use std::collections::VecDeque;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use super::board::{BOARD_HEIGHT, BOARD_WIDTH, Board, PLAY_HEIGHT};
+use super::board::{BOARD_HEIGHT, BOARD_WIDTH, Board, DEADLINE_Y, PLAY_HEIGHT};
 use super::garbage::{GarbageChunk, GarbageConfig, GarbageQueue};
 use super::piece::{Piece, PieceType, Rotation};
 use super::rng::{BagRng, PieceRng};
 
 const SPAWN_X: i32 = 3;
-const SPAWN_Y: i32 = 0;
+// Verified in Jstris getBlockSets(): I cells sit on row VISIBLE_START_Y (y=1),
+// while O/T/S/Z/J/L straddle DEADLINE_Y (y=0) and VISIBLE_START_Y (y=1).
+pub const SPAWN_Y: i32 = DEADLINE_Y;
 
 #[derive(Debug)]
 pub struct GameState {
@@ -25,16 +27,23 @@ pub struct GameState {
     pub pieces_placed: u32,
     pub game_over: bool,
     pub gravity_accum_ms: u64,
+    pub soft_drop_accum_millirows: u64,
     pub lock_delay_ms: u64,
     pub lock_reset_count: u32,
     pub grounded: bool,
     pub lock_started: bool,
+    pub elapsed_since_spawn_ms: u64,
+    pub elapsed_since_first_contact_ms: u64,
     pub combo: u32,
     pub b2b: u32,
     pub last_clear_label: Option<String>,
     pub last_action_rotation: bool,
     pub lines: u32,
     pub score: u32,
+    pub attack: u32,
+    pub finesse_faults: u32,
+    pub piece_manual_inputs: u32,
+    pub last_clear_was_pc: bool,
     pub level: u32,
     pub garbage_rows: [bool; BOARD_HEIGHT],
     pub garbage_remaining: u32,
@@ -62,16 +71,23 @@ impl GameState {
             pieces_placed: 0,
             game_over: false,
             gravity_accum_ms: 0,
+            soft_drop_accum_millirows: 0,
             lock_delay_ms: 0,
             lock_reset_count: 0,
             grounded: false,
             lock_started: false,
+            elapsed_since_spawn_ms: 0,
+            elapsed_since_first_contact_ms: 0,
             combo: 0,
             b2b: 0,
             last_clear_label: None,
             last_action_rotation: false,
             lines: 0,
             score: 0,
+            attack: 0,
+            finesse_faults: 0,
+            piece_manual_inputs: 0,
+            last_clear_was_pc: false,
             level: 1,
             garbage_rows: [false; BOARD_HEIGHT],
             garbage_remaining: 0,
@@ -86,11 +102,19 @@ impl GameState {
             y: SPAWN_Y,
         };
         self.gravity_accum_ms = 0;
+        self.soft_drop_accum_millirows = 0;
         self.lock_delay_ms = 0;
         self.lock_reset_count = 0;
         self.grounded = false;
         self.lock_started = false;
+        self.elapsed_since_spawn_ms = 0;
+        self.elapsed_since_first_contact_ms = 0;
         self.last_action_rotation = false;
+        self.piece_manual_inputs = 0;
+    }
+
+    pub fn add_finesse_inputs(&mut self, inputs: u32) {
+        self.piece_manual_inputs = self.piece_manual_inputs.saturating_add(inputs);
     }
 
     pub fn pop_next(&mut self) -> PieceType {
@@ -188,5 +212,83 @@ impl GameState {
             }
         }
         top_out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_game_spawns_at_top_of_visible_field() {
+        let state = GameState::new(1);
+
+        assert_eq!(state.active.x, SPAWN_X);
+        assert_eq!(state.active.y, SPAWN_Y);
+        assert_eq!(state.active.rotation, Rotation(0));
+        // Bottom row of every spawned piece sits on the top visible row (VISIBLE_START_Y),
+        // while non-I pieces have their top row in the single deadline buffer row (DEADLINE_Y).
+        let max_y = state.active.blocks().iter().map(|&(_, y)| y).max().unwrap();
+        assert_eq!(max_y, super::super::board::VISIBLE_START_Y as i32);
+    }
+
+    #[test]
+    fn reset_active_restores_spawn_and_clears_piece_timers() {
+        let mut state = GameState::new(1);
+        state.active.x = 0;
+        state.active.y = BOARD_HEIGHT as i32 - 2;
+        state.active.rotation = Rotation(3);
+        state.gravity_accum_ms = 91;
+        state.soft_drop_accum_millirows = 800;
+        state.lock_delay_ms = 499;
+        state.lock_reset_count = 15;
+        state.grounded = true;
+        state.lock_started = true;
+        state.last_action_rotation = true;
+        state.elapsed_since_spawn_ms = 19_999;
+        state.elapsed_since_first_contact_ms = 4999;
+
+        for kind in PieceType::ALL {
+            state.reset_active(kind);
+
+            assert_eq!(state.active, Piece::new(kind, SPAWN_X, SPAWN_Y));
+            assert_eq!(state.gravity_accum_ms, 0);
+            assert_eq!(state.soft_drop_accum_millirows, 0);
+            assert_eq!(state.lock_delay_ms, 0);
+            assert_eq!(state.lock_reset_count, 0);
+            assert!(!state.grounded);
+            assert!(!state.lock_started);
+            assert!(!state.last_action_rotation);
+            assert_eq!(state.elapsed_since_spawn_ms, 0);
+            assert_eq!(state.elapsed_since_first_contact_ms, 0);
+        }
+    }
+
+    #[test]
+    fn cheese_stays_at_bottom_below_spawn() {
+        let mut state = GameState::new(1);
+        state.seed_cheese(5, 7);
+
+        assert_eq!(state.garbage_remaining, 5);
+        for y in 0..BOARD_HEIGHT {
+            let filled = state.board.cells()[y]
+                .iter()
+                .filter(|cell| cell.is_some())
+                .count();
+            if y >= BOARD_HEIGHT - 5 {
+                assert!(state.garbage_rows[y]);
+                assert_eq!(filled, BOARD_WIDTH - 1);
+            } else {
+                assert!(!state.garbage_rows[y]);
+                assert_eq!(filled, 0);
+            }
+        }
+        assert!(
+            state
+                .active
+                .blocks()
+                .iter()
+                .all(|&(x, y)| state.board.get(x, y).is_none())
+        );
     }
 }

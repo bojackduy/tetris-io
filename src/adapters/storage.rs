@@ -23,6 +23,10 @@ pub struct StoredConfig {
     pub soft_drop_factor: u32,
     pub lock_delay_ms: u64,
     pub lock_reset_limit: u32,
+    pub sound_volume: u8,
+    pub rotation_sound: bool,
+    pub ghost: bool,
+    pub grid_style: u8,
     pub key_move_left: String,
     pub key_move_right: String,
     pub key_soft_drop: String,
@@ -58,7 +62,8 @@ impl SqliteStorage {
                 "SELECT gravity_ms, frame_ms, das_ms, arr_ms, dcd_ms, soft_drop_factor,
                         lock_delay_ms, lock_reset_limit,
                         key_move_left, key_move_right, key_soft_drop, key_rotate_left,
-                        key_rotate_right, key_rotate_180, key_hold, key_hard_drop, key_quit
+                        key_rotate_right, key_rotate_180, key_hold, key_hard_drop, key_quit,
+                        sound_volume, rotation_sound, ghost, grid_style
                  FROM config WHERE id = 1",
             )
             .map_err(to_io_err)?;
@@ -82,6 +87,10 @@ impl SqliteStorage {
                 key_hold: row.get(14)?,
                 key_hard_drop: row.get(15)?,
                 key_quit: row.get(16)?,
+                sound_volume: row.get(17)?,
+                rotation_sound: row.get(18)?,
+                ghost: row.get(19)?,
+                grid_style: row.get(20)?,
             })
         })
         .optional()
@@ -95,9 +104,11 @@ impl SqliteStorage {
                     id, gravity_ms, frame_ms, das_ms, arr_ms, dcd_ms, soft_drop_factor,
                     lock_delay_ms, lock_reset_limit,
                     key_move_left, key_move_right, key_soft_drop, key_rotate_left,
-                    key_rotate_right, key_rotate_180, key_hold, key_hard_drop, key_quit
+                    key_rotate_right, key_rotate_180, key_hold, key_hard_drop, key_quit,
+                    sound_volume, rotation_sound, ghost, grid_style, profile_version
                 ) VALUES (
-                    1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                    1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                    ?18, ?19, ?20, ?21, 2
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     gravity_ms = excluded.gravity_ms,
@@ -116,7 +127,12 @@ impl SqliteStorage {
                     key_rotate_180 = excluded.key_rotate_180,
                     key_hold = excluded.key_hold,
                     key_hard_drop = excluded.key_hard_drop,
-                    key_quit = excluded.key_quit",
+                    key_quit = excluded.key_quit,
+                    sound_volume = excluded.sound_volume,
+                    rotation_sound = excluded.rotation_sound,
+                    ghost = excluded.ghost,
+                    grid_style = excluded.grid_style,
+                    profile_version = excluded.profile_version",
                 params![
                     config.gravity_ms,
                     config.frame_ms,
@@ -135,6 +151,10 @@ impl SqliteStorage {
                     config.key_hold,
                     config.key_hard_drop,
                     config.key_quit,
+                    config.sound_volume,
+                    config.rotation_sound,
+                    config.ghost,
+                    config.grid_style,
                 ],
             )
             .map_err(to_io_err)?;
@@ -211,7 +231,12 @@ impl SqliteStorage {
                     key_rotate_180 TEXT NOT NULL,
                     key_hold TEXT NOT NULL,
                     key_hard_drop TEXT NOT NULL,
-                    key_quit TEXT NOT NULL
+                    key_quit TEXT NOT NULL,
+                    sound_volume INTEGER NOT NULL DEFAULT 60,
+                    rotation_sound INTEGER NOT NULL DEFAULT 0,
+                    ghost INTEGER NOT NULL DEFAULT 1,
+                    grid_style INTEGER NOT NULL DEFAULT 1,
+                    profile_version INTEGER NOT NULL DEFAULT 2
                 );
                 CREATE TABLE IF NOT EXISTS high_scores (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,6 +247,44 @@ impl SqliteStorage {
                     mode TEXT NOT NULL,
                     created_at INTEGER NOT NULL
                 );",
+            )
+            .map_err(to_io_err)?;
+        let columns = self
+            .conn
+            .prepare("PRAGMA table_info(config)")
+            .map_err(to_io_err)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(to_io_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(to_io_err)?;
+        // Additive migration keeps scores and custom key bindings intact.
+        for (name, definition) in [
+            ("sound_volume", "INTEGER NOT NULL DEFAULT 60"),
+            ("rotation_sound", "INTEGER NOT NULL DEFAULT 0"),
+            ("ghost", "INTEGER NOT NULL DEFAULT 1"),
+            ("grid_style", "INTEGER NOT NULL DEFAULT 1"),
+            ("profile_version", "INTEGER NOT NULL DEFAULT 1"),
+        ] {
+            if !columns.iter().any(|column| column == name) {
+                self.conn
+                    .execute_batch(&format!(
+                        "ALTER TABLE config ADD COLUMN {name} {definition}"
+                    ))
+                    .map_err(to_io_err)?;
+            }
+        }
+        self.conn
+            .execute_batch(
+                "BEGIN;
+                 UPDATE config SET gravity_ms = 900, das_ms = 133, arr_ms = 10, dcd_ms = 0,
+                     soft_drop_factor = 120, lock_delay_ms = 500, lock_reset_limit = 0,
+                     profile_version = 2
+                 WHERE profile_version = 1 AND gravity_ms = 1000 AND das_ms = 167
+                     AND arr_ms = 16 AND dcd_ms = 33 AND soft_drop_factor = 6
+                     AND lock_delay_ms = 700 AND lock_reset_limit = 10;
+                 UPDATE config SET soft_drop_factor = 120, profile_version = 2
+                 WHERE profile_version = 1;
+                 COMMIT;",
             )
             .map_err(to_io_err)?;
         Ok(())
