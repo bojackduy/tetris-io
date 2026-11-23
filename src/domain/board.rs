@@ -93,8 +93,8 @@ impl Board {
         let l = lines as usize;
 
         let mut top_out = false;
-        for y in 0..l {
-            if self.cells[y].iter().any(|c| c.is_some()) {
+        for row in self.cells.iter().take(l) {
+            if row.iter().any(|c| c.is_some()) {
                 top_out = true;
                 break;
             }
