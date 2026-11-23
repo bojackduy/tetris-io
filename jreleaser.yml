@@ -1,20 +1,20 @@
 project:
   name: tetris-io
-  version: 0.2.1
+  version: 0.2.2
   description: Terminal-based Tetris game
   longDescription: |
     A modern Tetris implementation in Rust featuring SRS rotation,
     multiple game modes, and a clean terminal UI.
   license: MIT
   authors:
-    - Duyyyy123
-  copyright: Copyright (c) 2026 Duyyyy123
+    - bojackduy
+  copyright: Copyright (c) 2026 bojackduy
   links:
-    homepage: https://github.com/Duyyy123/tetris-io
+    homepage: https://github.com/bojackduy/tetris-io
 
 release:
   github:
-    owner: Duyyy123
+    owner: bojackduy
     name: tetris-io
     overwrite: true
     milestone:

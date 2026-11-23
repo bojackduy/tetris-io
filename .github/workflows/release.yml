@@ -217,7 +217,7 @@ jobs:
             },
             "repository": {
               "type": "git",
-              "url": "https://github.com/Duyyy123/tetris-io"
+              "url": "https://github.com/bojackduy/tetris-io"
             },
             "keywords": ["tetris", "game", "cli"],
             "license": "MIT",

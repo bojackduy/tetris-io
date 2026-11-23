@@ -1,10 +1,10 @@
 [package]
 name = "tetris-io"
 description = "Terminal-based Tetris game built with Ratatui and Crossterm"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/Duyyy123/tetris-io"
+repository = "https://github.com/bojackduy/tetris-io"
 authors = ["Duyyy123"]
 keywords = ["tetris", "terminal", "tui", "ratatui", "game"]
 categories = ["games", "command-line-interface"]
